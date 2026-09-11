@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#090b12" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="Turn long videos into 1–5 minute vertical highlight videos directly in your browser."
+    />
+    <title>Long2Short — Private video highlighter</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23090b12'/%3E%3Cpath d='M18 14h15c10 0 17 7 17 18s-7 18-17 18H18z' fill='%237c5cff'/%3E%3Cpath d='M28 23l15 9-15 9z' fill='white'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="Long2Short home">
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <span>Long2Short</span>
+      </a>
+      <div class="top-actions">
+        <span class="privacy-chip"><span class="privacy-dot"></span>Runs on your device</span>
+        <button class="ghost-button install-button" id="installAppBtn" type="button" hidden>
+          Install app
+        </button>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <section class="intro" aria-labelledby="pageTitle">
+        <div>
+          <p class="eyebrow">PRIVATE VIDEO STUDIO</p>
+          <h1 id="pageTitle">Find the strongest moments.<br />Make one clean short.</h1>
+          <p class="intro-copy">
+            Choose a long video and an output length. Long2Short scans the video locally,
+            selects highlights, reframes them to vertical, and keeps the original audio.
+          </p>
+        </div>
+        <div class="format-strip" aria-label="Output details">
+          <span><b>Up to 2h+</b> source</span>
+          <span><b>9:16</b> vertical</span>
+          <span><b>1–5 min</b> output</span>
+        </div>
+      </section>
+
+      <div class="workspace-grid">
+        <section class="panel setup-panel" aria-labelledby="setupTitle">
+          <div class="panel-heading">
+            <div>
+              <p class="step-label">01 / SOURCE</p>
+              <h2 id="setupTitle">Choose your long video</h2>
+            </div>
+            <span class="local-badge">No upload</span>
+          </div>
+
+          <label class="drop-zone" id="dropZone" for="fileInput">
+            <input
+              id="fileInput"
+              type="file"
+              accept="video/*,.mp4,.mov,.m4v,.webm,.mkv,.avi,.3gp"
+            />
+            <span class="upload-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="img">
+                <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" />
+              </svg>
+            </span>
+            <span class="drop-title">Choose video</span>
+            <span class="drop-copy">or drag it here on a computer</span>
+            <span class="file-types">MP4, MOV, M4V, WebM and most browser-playable formats</span>
+          </label>
+
+          <div class="source-card" id="sourceCard" hidden>
+            <div class="source-preview-wrap">
+              <video id="sourcePreview" controls playsinline preload="metadata"></video>
+              <span class="source-ready">READY</span>
+            </div>
+            <div class="source-details">
+              <div class="source-title-row">
+                <div>
+                  <p class="source-name" id="sourceName"></p>
+                  <p class="source-meta" id="sourceMeta"></p>
+                </div>
+                <button class="text-button" id="replaceBtn" type="button">Replace</button>
+              </div>
+              <p class="source-note" id="sourceNote">Preview the video here before processing.</p>
+            </div>
+          </div>
+
+          <fieldset class="duration-fieldset">
+            <legend>
+              <span class="step-label">02 / LENGTH</span>
+              <span class="legend-title">Choose the finished length</span>
+            </legend>
+            <div class="duration-grid" id="durationGrid">
+              <button class="duration-button" type="button" data-minutes="1" aria-pressed="false">
+                <strong>1</strong><span>minute</span>
+              </button>
+              <button class="duration-button is-active" type="button" data-minutes="2" aria-pressed="true">
+                <strong>2</strong><span>minutes</span>
+              </button>
+              <button class="duration-button" type="button" data-minutes="3" aria-pressed="false">
+                <strong>3</strong><span>minutes</span>
+              </button>
+              <button class="duration-button" type="button" data-minutes="4" aria-pressed="false">
+                <strong>4</strong><span>minutes</span>
+              </button>
+              <button class="duration-button" type="button" data-minutes="5" aria-pressed="false">
+                <strong>5</strong><span>minutes</span>
+              </button>
+            </div>
+          </fieldset>
+
+          <div class="output-plan">
+            <div>
+              <span class="plan-icon" aria-hidden="true">↗</span>
+              <span><b>Smart highlights</b><small>Balanced across the full video</small></span>
+            </div>
+            <div>
+              <span class="plan-icon" aria-hidden="true">▯</span>
+              <span><b>Vertical crop</b><small>Follows the active area</small></span>
+            </div>
+            <div>
+              <span class="plan-icon" aria-hidden="true">◖</span>
+              <span><b>Original audio</b><small>No background playback</small></span>
+            </div>
+          </div>
+
+          <div class="action-row">
+            <button class="primary-button" id="createBtn" type="button" disabled>
+              <span>Create 2-minute short</span>
+              <span aria-hidden="true">→</span>
+            </button>
+            <p id="formatNote">Your browser will choose the best available video format.</p>
+          </div>
+        </section>
+
+        <aside class="side-column" aria-label="Processing information">
+          <section class="panel process-card">
+            <p class="step-label">HOW IT WORKS</p>
+            <ol class="process-list">
+              <li>
+                <span>1</span>
+                <div><b>Scan</b><p>Checks moments throughout the full timeline.</p></div>
+              </li>
+              <li>
+                <span>2</span>
+                <div><b>Select</b><p>Picks clear, active, well-spaced highlights.</p></div>
+              </li>
+              <li>
+                <span>3</span>
+                <div><b>Render</b><p>Creates one vertical video with original audio.</p></div>
+              </li>
+            </ol>
+          </section>
+
+          <section class="notice-card">
+            <div class="notice-icon" aria-hidden="true">!</div>
+            <div>
+              <b>Keep this page open</b>
+              <p>
+                Processing happens on this device. A 5-minute result takes at least about
+                5 minutes to render after scanning. Keep the screen awake until it finishes.
+              </p>
+            </div>
+          </section>
+
+          <section class="privacy-card">
+            <div class="lock-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M7 10V7a5 5 0 0 1 10 0v3m-9 0h8a2 2 0 0 1 2 2v7H6v-7a2 2 0 0 1 2-2Z" /></svg>
+            </div>
+            <div><b>Your video stays private</b><p>No server, account, API key, or cloud upload.</p></div>
+          </section>
+        </aside>
+      </div>
+
+      <section class="panel progress-panel" id="progressPanel" hidden aria-labelledby="progressTitle">
+        <div class="render-preview">
+          <canvas id="renderCanvas" width="720" height="1280" aria-label="Live vertical output preview"></canvas>
+          <span class="live-badge"><i></i> LIVE PREVIEW</span>
+        </div>
+        <div class="progress-content">
+          <p class="step-label">PROCESSING</p>
+          <h2 id="progressTitle">Scanning your video</h2>
+          <p class="progress-message" id="progressMessage">Preparing the local video engine…</p>
+          <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressTrack">
+            <span id="progressBar"></span>
+          </div>
+          <div class="progress-stats">
+            <span id="progressPercent">0%</span>
+            <span id="progressDetail">Keep this page open</span>
+          </div>
+          <button class="cancel-button" id="cancelBtn" type="button">Cancel processing</button>
+        </div>
+      </section>
+
+      <section class="panel result-panel" id="resultPanel" hidden aria-labelledby="resultTitle">
+        <div class="result-copy">
+          <span class="success-mark" aria-hidden="true">✓</span>
+          <p class="step-label">FINISHED</p>
+          <h2 id="resultTitle">Your short is ready</h2>
+          <p id="resultMeta">Preview it, then save it to your device.</p>
+          <div class="result-actions">
+            <a class="primary-button download-button" id="downloadBtn" href="#" download>
+              <span>Download video</span><span aria-hidden="true">↓</span>
+            </a>
+            <button class="secondary-button" id="shareBtn" type="button" hidden>Save / Share</button>
+            <button class="text-button" id="makeAnotherBtn" type="button">Make another</button>
+          </div>
+        </div>
+        <div class="result-video-wrap">
+          <video id="resultVideo" controls playsinline></video>
+        </div>
+      </section>
+
+      <section class="error-banner" id="errorBanner" role="alert" hidden>
+        <span aria-hidden="true">!</span>
+        <div><b id="errorTitle">Something went wrong</b><p id="errorMessage"></p></div>
+        <button id="dismissErrorBtn" type="button" aria-label="Dismiss error">×</button>
+      </section>
+    </main>
+
+    <footer>
+      <span>Long2Short</span>
+      <span>Local processing • No cloud upload</span>
+    </footer>
+
+    <noscript>This app needs JavaScript enabled to process video.</noscript>
+  </body>
+</html>
