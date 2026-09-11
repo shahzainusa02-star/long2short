@@ -3,6 +3,9 @@
 This is a complete browser-only video short maker. It does **not** use Render,
 a server, an API key, or cloud video uploads.
 
+This updated build adds safer face-aware framing, dark-frame protection,
+12-second highlight pacing, and preloaded joins for smoother output.
+
 ## Put it on GitHub
 
 1. Extract the ZIP.

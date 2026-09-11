@@ -5,6 +5,7 @@
   const OUTPUT_HEIGHT = 1280;
   const TARGET_ASPECT = OUTPUT_WIDTH / OUTPUT_HEIGHT;
   const RENDER_FPS = 30;
+  const HIGHLIGHT_SECONDS = 12;
 
   const ui = {
     body: document.body,
@@ -50,6 +51,7 @@
     running: false,
     cancelled: false,
     activeVideo: null,
+    activeVideos: [],
     recorder: null,
     captureStream: null,
     audioContext: null,
@@ -60,6 +62,8 @@
     installPrompt: null,
     lastProgressPaint: 0
   };
+  let sharedFaceDetector = null;
+  let faceDetectorChecked = false;
 
   class CancelledError extends Error {
     constructor() {
@@ -314,6 +318,7 @@
       // Start media and audio while this function still has the user's click permission.
       pipeline = primeProcessingPipeline();
       state.activeVideo = pipeline.video;
+      state.activeVideos = pipeline.videos;
       state.audioContext = pipeline.audioContext;
       await Promise.all([pipeline.ready, requestWakeLock()]);
       throwIfCancelled();
@@ -322,8 +327,8 @@
       throwIfCancelled();
 
       setProgress(35, "Choosing the best moments", "Balancing highlights across the full timeline…", "Selection almost ready");
-      const segments = selectSegments(candidates, targetSeconds, state.sourceDuration);
-      await waitForPaint();
+      const selectedSegments = selectSegments(candidates, targetSeconds, state.sourceDuration);
+      const segments = await refineSegmentSafety(pipeline.video, selectedSegments, state.sourceDuration);
       throwIfCancelled();
 
       const result = await renderSegments(pipeline, segments, targetSeconds);
@@ -345,6 +350,7 @@
       state.running = false;
       state.cancelled = false;
       state.activeVideo = null;
+      state.activeVideos = [];
       state.recorder = null;
       state.captureStream = null;
       state.audioContext = null;
@@ -356,18 +362,21 @@
   }
 
   function primeProcessingPipeline() {
-    const video = document.createElement("video");
-    video.className = "work-video";
-    video.playsInline = true;
-    video.preload = "auto";
-    video.volume = 1;
-    video.muted = false;
-    video.src = state.sourceUrl;
-    document.body.appendChild(video);
-
+    const videos = [0, 1].map(() => {
+      const video = document.createElement("video");
+      video.className = "work-video";
+      video.playsInline = true;
+      video.preload = "auto";
+      video.volume = 1;
+      video.muted = false;
+      video.src = state.sourceUrl;
+      document.body.appendChild(video);
+      return video;
+    });
     let audioContext = null;
     let audioDestination = null;
-    let mediaSource = null;
+    const mediaSources = [];
+    const gainNodes = [];
     let audioSetupError = null;
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
 
@@ -375,32 +384,45 @@
       try {
         audioContext = new AudioContextClass();
         audioDestination = audioContext.createMediaStreamDestination();
-        mediaSource = audioContext.createMediaElementSource(video);
-        mediaSource.connect(audioDestination);
+        videos.forEach((video) => {
+          const mediaSource = audioContext.createMediaElementSource(video);
+          const gainNode = audioContext.createGain();
+          gainNode.gain.value = 0;
+          mediaSource.connect(gainNode);
+          gainNode.connect(audioDestination);
+          mediaSources.push(mediaSource);
+          gainNodes.push(gainNode);
+        });
         audioContext.resume().catch(() => null);
       } catch (error) {
         console.warn("Original-audio capture could not be prepared.", error);
         audioSetupError = error;
-        audioContext = null;
         audioDestination = null;
-        mediaSource = null;
-        video.muted = true;
+        videos.forEach((video) => {
+          video.muted = true;
+        });
       }
     } else {
-      video.muted = true;
+      videos.forEach((video) => {
+        video.muted = true;
+      });
     }
 
-    const metadataReady = loadVideoMetadata(video);
-    const primingPlay = video.play()
-      .then(() => {
-        video.pause();
-        if (video.currentTime > 0.2) video.currentTime = 0;
-      })
-      .catch(() => null);
+    const metadataReady = Promise.all(videos.map((video) => loadVideoMetadata(video)));
+    const primingPlay = Promise.all(
+      videos.map((video) =>
+        video.play()
+          .then(() => {
+            video.pause();
+            if (video.currentTime > 0.2) video.currentTime = 0;
+          })
+          .catch(() => null)
+      )
+    );
 
     const ready = Promise.all([metadataReady, primingPlay]).then(async () => {
-      await resolveFiniteDuration(video);
-      video.pause();
+      await Promise.all(videos.map((video) => resolveFiniteDuration(video)));
+      videos.forEach((video) => video.pause());
       if (!audioDestination) {
         const error = new Error(audioSetupError?.message || "Original-audio capture is not supported by this browser.");
         error.name = "NotSupportedError";
@@ -408,16 +430,24 @@
       }
     });
 
-    return { video, audioContext, audioDestination, mediaSource, ready };
+    return {
+      video: videos[0],
+      videos,
+      audioContext,
+      audioDestination,
+      mediaSources,
+      gainNodes,
+      ready
+    };
   }
 
   async function analyzeVideo(video, duration, targetSeconds) {
-    const clipCount = Math.ceil(targetSeconds / 10);
+    const clipCount = Math.ceil(targetSeconds / HIGHLIGHT_SECONDS);
     const sampleCount = Math.min(
       180,
       Math.max(42, clipCount * 5, Math.ceil(duration / 45))
     );
-    const halfClip = 5;
+    const halfClip = HIGHLIGHT_SECONDS / 2;
     const firstTime = Math.min(halfClip, Math.max(0, duration / 4));
     const lastTime = Math.max(firstTime, duration - halfClip - 0.6);
     const pairOffset = Math.min(0.45, Math.max(0.18, duration / sampleCount / 8));
@@ -503,11 +533,8 @@
       0,
       1
     );
-    const focusX = clamp(
-      salienceTotal > 0 ? salienceWeightedX / salienceTotal / width : 0.5,
-      0.17,
-      0.83
-    );
+    const rawFocus = salienceTotal > 0 ? salienceWeightedX / salienceTotal / width : 0.5;
+    const focusX = clamp(rawFocus * 0.82 + 0.5 * 0.18, 0.19, 0.81);
 
     const noShiftDifference = frameDifference(first, second, width, height, 0, 0);
     let bestDifference = noShiftDifference;
@@ -598,7 +625,7 @@
       return [{ start: 0, length: targetSeconds, focusX: 0.5, score: 1 }];
     }
 
-    const clipLength = 10;
+    const clipLength = HIGHLIGHT_SECONDS;
     const clipCount = Math.ceil(targetSeconds / clipLength);
     const segmentLengths = distributeDuration(targetSeconds, clipCount);
     const pool = candidates.map((candidate) => ({
@@ -666,18 +693,103 @@
     });
   }
 
+  async function refineSegmentSafety(video, segments, sourceDuration) {
+    const width = 96;
+    const height = clamp(Math.round(width * (video.videoHeight / video.videoWidth)), 54, 108);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    const refined = [];
+    const shifts = [0, 3, -3, 6, -6];
+
+    for (let index = 0; index < segments.length; index += 1) {
+      throwIfCancelled();
+      const segment = segments[index];
+      let best = null;
+
+      for (const shift of shifts) {
+        const start = clamp(segment.start + shift, 0, sourceDuration - segment.length);
+        const candidate = { ...segment, start };
+        if (overlapsEarlierSegment(candidate, refined)) continue;
+
+        const risk = await measureVisualRisk(video, context, width, height, candidate);
+        if (!best || risk < best.risk) best = { segment: candidate, risk };
+        if (risk < 0.28) break;
+      }
+
+      refined.push(best?.segment || segment);
+      setProgress(
+        35 + ((index + 1) / segments.length) * 6,
+        "Checking the selected moments",
+        `Protecting highlight ${index + 1} of ${segments.length} from dark frames…`,
+        "Final safety check",
+        true
+      );
+      if (index % 3 === 2) await waitForPaint();
+    }
+
+    return refined.sort((a, b) => a.start - b.start);
+  }
+
+  async function measureVisualRisk(video, context, width, height, segment) {
+    const probeRatios = [0.15, 0.5, 0.85];
+    let worstRisk = 0;
+
+    for (const ratio of probeRatios) {
+      await seekVideo(video, segment.start + segment.length * ratio);
+      context.drawImage(video, 0, 0, width, height);
+      const pixels = context.getImageData(0, 0, width, height).data;
+      let brightness = 0;
+      let darkPixels = 0;
+      let brightPixels = 0;
+      let samples = 0;
+
+      for (let offset = 0; offset < pixels.length; offset += 16) {
+        const luma = pixels[offset] * 0.299 + pixels[offset + 1] * 0.587 + pixels[offset + 2] * 0.114;
+        brightness += luma;
+        if (luma < 18) darkPixels += 1;
+        if (luma > 244) brightPixels += 1;
+        samples += 1;
+      }
+
+      const mean = brightness / Math.max(1, samples);
+      const darkRatio = darkPixels / Math.max(1, samples);
+      const brightRatio = brightPixels / Math.max(1, samples);
+      const risk =
+        clamp((42 - mean) / 42, 0, 1) * 1.15 +
+        clamp((darkRatio - 0.55) / 0.45, 0, 1) * 0.9 +
+        clamp((mean - 224) / 31, 0, 1) * 0.8 +
+        clamp((brightRatio - 0.6) / 0.4, 0, 1) * 0.5;
+      worstRisk = Math.max(worstRisk, risk);
+    }
+
+    return worstRisk;
+  }
+
+  function overlapsEarlierSegment(candidate, earlierSegments) {
+    const start = candidate.start;
+    const end = start + candidate.length;
+    return earlierSegments.some((other) => {
+      const otherEnd = other.start + other.length;
+      return start < otherEnd - 0.25 && end > other.start + 0.25;
+    });
+  }
+
   async function renderSegments(pipeline, segments, targetSeconds) {
-    const { video, audioContext, audioDestination } = pipeline;
+    const { videos, audioContext, audioDestination, gainNodes } = pipeline;
+    const firstVideo = videos[0];
     const canvas = ui.renderCanvas;
     const context = canvas.getContext("2d", { alpha: false, desynchronized: true });
     canvas.width = OUTPUT_WIDTH;
     canvas.height = OUTPUT_HEIGHT;
 
-    setProgress(36, "Building your vertical short", `Preparing ${segments.length} selected moments…`, "Original audio included");
+    setProgress(41, "Building your vertical short", `Preparing ${segments.length} selected moments…`, "Original audio included");
 
-    await seekVideo(video, segments[0].start);
-    const firstTracker = createCropTracker(segments[0].focusX, video);
-    drawVerticalFrame(video, context, firstTracker, true);
+    await seekVideo(firstVideo, segments[0].start);
+    setActiveAudioSlot(gainNodes, 0, audioContext);
+    const firstTracker = createCropTracker(segments[0].focusX, firstVideo);
+    drawVerticalFrame(firstVideo, context, firstTracker, true);
 
     const canvasStream = canvas.captureStream(RENDER_FPS);
     const tracks = [...canvasStream.getVideoTracks()];
@@ -698,19 +810,30 @@
       for (let index = 0; index < segments.length; index += 1) {
         throwIfCancelled();
         const segment = segments[index];
+        const activeSlot = index % videos.length;
+        const video = videos[activeSlot];
+        state.activeVideo = video;
 
-        if (index > 0) {
-          await pauseRecorder(recorder);
+        if (Math.abs(video.currentTime - segment.start) > 0.08) {
           await seekVideo(video, segment.start);
-          const stillTracker = createCropTracker(segment.focusX, video);
-          drawVerticalFrame(video, context, stillTracker, true);
-          await resumeRecorder(recorder);
         }
 
+        setActiveAudioSlot(gainNodes, activeSlot, audioContext);
         const tracker = createCropTracker(segment.focusX, video);
+        const nextSegment = segments[index + 1];
+        let nextPreparation = null;
+
+        if (nextSegment) {
+          const nextVideo = videos[(index + 1) % videos.length];
+          nextVideo.pause();
+          nextPreparation = seekVideo(nextVideo, nextSegment.start)
+            .then(() => null)
+            .catch((error) => error);
+        }
+
         await playAndRenderSegment(video, context, tracker, segment, ({ elapsed }) => {
           const totalRendered = completedSeconds + elapsed;
-          const percent = 36 + (totalRendered / targetSeconds) * 62;
+          const percent = 41 + (totalRendered / targetSeconds) * 57;
           setProgress(
             percent,
             "Building your vertical short",
@@ -720,14 +843,24 @@
           );
         });
         completedSeconds += segment.length;
+
+        if (nextSegment) {
+          const preparationError = await nextPreparation;
+          if (preparationError) throw preparationError;
+          const nextSlot = (index + 1) % videos.length;
+          const nextVideo = videos[nextSlot];
+          setActiveAudioSlot(gainNodes, nextSlot, audioContext);
+          const nextTracker = createCropTracker(nextSegment.focusX, nextVideo);
+          drawVerticalFrame(nextVideo, context, nextTracker, true);
+        }
       }
 
-      video.pause();
+      videos.forEach((video) => video.pause());
       setProgress(99, "Finishing your video", "Packing the video for download…", "Almost done");
       if (recorder.state !== "inactive") recorder.stop();
       await stopped;
     } catch (error) {
-      video.pause();
+      videos.forEach((video) => video.pause());
       if (recorder.state !== "inactive") recorder.stop();
       await stopped.catch(() => null);
       throw error;
@@ -746,6 +879,15 @@
     const fileName = `${safeBase}-short-${state.outputMinutes}m.${extension}`;
 
     return { blob, mimeType, fileName };
+  }
+
+  function setActiveAudioSlot(gainNodes, activeSlot, audioContext) {
+    if (!audioContext) return;
+    const now = audioContext.currentTime;
+    gainNodes.forEach((gainNode, index) => {
+      gainNode.gain.cancelScheduledValues(now);
+      gainNode.gain.setValueAtTime(index === activeSlot ? 1 : 0, now);
+    });
   }
 
   function startMediaRecorder(stream) {
@@ -782,20 +924,6 @@
     }
 
     throw lastError || new Error("No supported video recording format was found.");
-  }
-
-  async function pauseRecorder(recorder) {
-    if (recorder.state !== "recording") return;
-    const paused = waitForEvent(recorder, "pause", 2000).catch(() => null);
-    recorder.pause();
-    await paused;
-  }
-
-  async function resumeRecorder(recorder) {
-    if (recorder.state !== "paused") return;
-    const resumed = waitForEvent(recorder, "resume", 2000).catch(() => null);
-    recorder.resume();
-    await resumed;
   }
 
   async function playAndRenderSegment(video, context, tracker, segment, onProgress) {
@@ -866,9 +994,15 @@
     canvas.width = width;
     canvas.height = height;
     return {
-      initialFocus: clamp(initialFocus || 0.5, 0.17, 0.83),
-      focus: clamp(initialFocus || 0.5, 0.17, 0.83),
-      target: clamp(initialFocus || 0.5, 0.17, 0.83),
+      initialFocus: clamp(initialFocus || 0.5, 0.19, 0.81),
+      focus: clamp(initialFocus || 0.5, 0.19, 0.81),
+      target: clamp(initialFocus || 0.5, 0.19, 0.81),
+      visualFocus: clamp(initialFocus || 0.5, 0.19, 0.81),
+      faceFocus: null,
+      faceSeenAt: 0,
+      faceScanPending: false,
+      blockDarkFrame: false,
+      hasGoodFrame: false,
       canvas,
       context: canvas.getContext("2d", { willReadFrequently: true }),
       previous: null,
@@ -878,12 +1012,14 @@
 
   function drawVerticalFrame(video, context, tracker, forceTrack) {
     tracker.frame += 1;
-    if (forceTrack || tracker.frame % 9 === 0) updateCropTracker(video, tracker);
-    tracker.focus += (tracker.target - tracker.focus) * 0.08;
+    if (forceTrack || tracker.frame % 3 === 0) updateCropTracker(video, tracker);
+    if (forceTrack || tracker.frame % 15 === 0) requestFaceFocus(video, tracker);
+    tracker.focus += (tracker.target - tracker.focus) * 0.055;
 
     const sourceWidth = video.videoWidth;
     const sourceHeight = video.videoHeight;
     if (!sourceWidth || !sourceHeight) return;
+    if (tracker.blockDarkFrame && tracker.hasGoodFrame) return;
     const sourceAspect = sourceWidth / sourceHeight;
     let sourceX = 0;
     let sourceY = 0;
@@ -911,6 +1047,7 @@
       OUTPUT_WIDTH,
       OUTPUT_HEIGHT
     );
+    tracker.hasGoodFrame = true;
   }
 
   function updateCropTracker(video, tracker) {
@@ -921,9 +1058,20 @@
     const rgba = context.getImageData(0, 0, width, height).data;
     const gray = new Uint8Array(width * height);
     const columns = new Float64Array(width);
+    let brightness = 0;
+    let darkPixels = 0;
 
     for (let pixel = 0, rgbaIndex = 0; pixel < gray.length; pixel += 1, rgbaIndex += 4) {
       gray[pixel] = Math.round(rgba[rgbaIndex] * 0.299 + rgba[rgbaIndex + 1] * 0.587 + rgba[rgbaIndex + 2] * 0.114);
+      brightness += gray[pixel];
+      if (gray[pixel] < 17) darkPixels += 1;
+    }
+
+    const meanBrightness = brightness / Math.max(1, gray.length);
+    tracker.blockDarkFrame = meanBrightness < 23 || darkPixels / Math.max(1, gray.length) > 0.82;
+    if (tracker.blockDarkFrame) {
+      tracker.previous = gray;
+      return;
     }
 
     let total = 0;
@@ -932,9 +1080,11 @@
       for (let x = 1; x < width - 1; x += 2) {
         const index = y * width + x;
         const edge = Math.abs(gray[index] - gray[index - 1]) + Math.abs(gray[index] - gray[index - width]);
-        const motion = tracker.previous ? Math.abs(gray[index] - tracker.previous[index]) : 0;
+        const motion = tracker.previous ? Math.min(48, Math.abs(gray[index] - tracker.previous[index])) : 0;
         const centerPrior = 0.45 + 0.55 * Math.exp(-Math.pow((x / width - 0.5) / 0.34, 2));
-        const salience = (edge * 0.42 + motion * 0.9) * centerPrior;
+        const verticalPosition = y / height;
+        const faceBand = 0.38 + 0.62 * Math.exp(-Math.pow((verticalPosition - 0.36) / 0.3, 2));
+        const salience = (edge * 0.52 + motion * 0.58) * centerPrior * faceBand;
         columns[x] += salience;
         total += salience;
         weightedX += salience * x;
@@ -942,10 +1092,63 @@
     }
 
     if (total > 0) {
-      const detected = clamp(weightedX / total / width, 0.17, 0.83);
-      tracker.target = clamp(detected * 0.72 + tracker.initialFocus * 0.28, 0.17, 0.83);
+      const rawDetected = weightedX / total / width;
+      const safeLeft = Math.max(0.18, tracker.initialFocus - 0.18);
+      const safeRight = Math.min(0.82, tracker.initialFocus + 0.18);
+      const detected = clamp(rawDetected, safeLeft, safeRight);
+      tracker.visualFocus = detected;
+      let target = detected * 0.5 + tracker.initialFocus * 0.5;
+
+      if (tracker.faceFocus !== null && performance.now() - tracker.faceSeenAt < 1300) {
+        target = tracker.faceFocus * 0.72 + detected * 0.28;
+      }
+
+      tracker.target = clamp(
+        target,
+        Math.max(0.17, tracker.initialFocus - 0.24),
+        Math.min(0.83, tracker.initialFocus + 0.24)
+      );
     }
     tracker.previous = gray;
+  }
+
+  function getFaceDetector() {
+    if (faceDetectorChecked) return sharedFaceDetector;
+    faceDetectorChecked = true;
+    if (typeof window.FaceDetector !== "function") return null;
+    try {
+      sharedFaceDetector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 5 });
+    } catch (_) {
+      sharedFaceDetector = null;
+    }
+    return sharedFaceDetector;
+  }
+
+  function requestFaceFocus(video, tracker) {
+    const detector = getFaceDetector();
+    if (!detector || tracker.faceScanPending || video.readyState < 2) return;
+    tracker.faceScanPending = true;
+
+    detector.detect(video)
+      .then((faces) => {
+        if (!faces?.length) return;
+        const reference = tracker.visualFocus ?? tracker.focus;
+        const ranked = faces
+          .map((face) => {
+            const box = face.boundingBox;
+            const centerX = (box.x + box.width / 2) / Math.max(1, video.videoWidth);
+            const size = Math.sqrt(Math.max(1, box.width * box.height));
+            const proximity = 1.2 - Math.min(1, Math.abs(centerX - reference)) * 0.72;
+            return { centerX, score: size * proximity };
+          })
+          .sort((a, b) => b.score - a.score);
+        tracker.faceFocus = clamp(ranked[0].centerX, 0.16, 0.84);
+        tracker.faceSeenAt = performance.now();
+      })
+      .catch(() => null)
+      .finally(() => {
+        tracker.faceScanPending = false;
+      });
   }
 
   function showResult(result, segmentCount) {
@@ -981,7 +1184,8 @@
     state.cancelled = true;
     ui.cancelBtn.disabled = true;
     ui.cancelBtn.textContent = "Cancelling…";
-    state.activeVideo?.pause();
+    const videos = state.activeVideos.length ? state.activeVideos : [state.activeVideo].filter(Boolean);
+    videos.forEach((video) => video.pause());
     if (state.recorder && state.recorder.state !== "inactive") {
       try {
         state.recorder.stop();
@@ -1139,11 +1343,15 @@
 
   async function cleanupPipeline(pipeline) {
     if (!pipeline) return;
+    const videos = pipeline.videos || [pipeline.video].filter(Boolean);
     try {
-      pipeline.video.pause();
-      pipeline.video.removeAttribute("src");
-      pipeline.video.load();
-      pipeline.mediaSource?.disconnect();
+      videos.forEach((video) => {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+      });
+      pipeline.mediaSources?.forEach((source) => source.disconnect());
+      pipeline.gainNodes?.forEach((gainNode) => gainNode.disconnect());
     } catch (_) {
       // Best-effort media cleanup.
     }
@@ -1151,7 +1359,7 @@
     if (pipeline.audioContext && pipeline.audioContext.state !== "closed") {
       await pipeline.audioContext.close().catch(() => null);
     }
-    pipeline.video.remove();
+    videos.forEach((video) => video.remove());
   }
 
   async function requestWakeLock() {
