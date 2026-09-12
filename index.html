@@ -7,17 +7,17 @@
     <meta name="color-scheme" content="dark" />
     <meta
       name="description"
-      content="Make a 1–5 minute preview of a long video, from opening through ending, directly in your browser."
+      content="Make fast-cut 1–5 minute previews of long videos directly in your browser."
     />
-    <title>Long2Short — Private video highlighter</title>
+    <title>Long2Short — Fast-cut preview maker</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link
       rel="icon"
       type="image/svg+xml"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23090b12'/%3E%3Cpath d='M18 14h15c10 0 17 7 17 18s-7 18-17 18H18z' fill='%237c5cff'/%3E%3Cpath d='M28 23l15 9-15 9z' fill='white'/%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="./styles.css?v=6" />
-    <script src="./app.js?v=6" defer></script>
+    <link rel="stylesheet" href="./styles.css?v=7" />
+    <script src="./app.js?v=7" defer></script>
   </head>
   <body>
     <header class="topbar">
@@ -37,11 +37,11 @@
       <section class="intro" aria-labelledby="pageTitle">
         <div>
           <p class="eyebrow">PRIVATE VIDEO STUDIO</p>
-          <h1 id="pageTitle">Preview the whole video.<br />Beginning to ending.</h1>
+          <h1 id="pageTitle">Long video in.<br />Fast-cut preview out.</h1>
           <p class="intro-copy">
             Choose a long video and an output length. Long2Short scans the video locally,
-            builds a 1–5 minute preview across the full timeline, keeps scenes in order,
-            reframes them to vertical, and preserves the original audio.
+            makes a fast-cut 1–5 minute preview, keeps an existing opening teaser when there is one,
+            reframes to vertical, and preserves the original audio.
           </p>
         </div>
         <div class="format-strip" aria-label="Output details">
@@ -124,25 +124,25 @@
               <option value="balanced">People + action (recommended)</option>
               <option value="whole">Show the entire original frame</option>
             </select>
-            <p>Works for any kind of video. Choose the entire frame if people, objects, or a process are spread far apart. The preview covers the full timeline, but cannot understand the meaning of every scene; review it before sharing.</p>
+            <p>Works for any kind of video. Choose the entire frame if people, objects, or a process are spread far apart. For videos without an opening teaser, automatic cuts sample across the whole timeline; review the result before sharing.</p>
           </div>
 
           <label class="preview-option" for="avoidPreview">
-            <input id="avoidPreview" type="checkbox" checked />
-            <span><b>Skip fast-cut opening previews</b><small>Start with the real action when the video opens with a rapid highlight montage. Turn off for videos where the fast opening matters.</small></span>
+            <input id="avoidPreview" type="checkbox" />
+            <span><b>Skip the video's own opening teaser (optional)</b><small>Leave this off to keep a fast-cut opening like your reference. Turn on only when you want to start with the main footage.</small></span>
           </label>
 
           <details class="start-control">
             <summary>Optional: correct the starting point</summary>
             <label for="openingStart">Start after opening</label>
             <input id="openingStart" type="text" placeholder="minutes:seconds, e.g. 1:18" autocomplete="off" spellcheck="false" aria-describedby="openingStartHelp" />
-            <p id="openingStartHelp">Usually leave this empty. Only enter a time if the automatic opening check misses a fast montage.</p>
+            <p id="openingStartHelp">Usually leave this empty. Enter a time only when you want to skip an opening that was not recognized automatically.</p>
           </details>
 
           <div class="output-plan">
             <div>
               <span class="plan-icon" aria-hidden="true">↗</span>
-              <span><b>Whole-video preview</b><small>Opening, middle, ending—in order</small></span>
+              <span><b>Fast-cut preview</b><small>Short shots across the full video</small></span>
             </div>
             <div>
               <span class="plan-icon" aria-hidden="true">▯</span>
@@ -173,7 +173,7 @@
               </li>
               <li>
                 <span>2</span>
-                <div><b>Select</b><p>Picks longer clear moments and keeps their original order.</p></div>
+                <div><b>Select</b><p>Keeps a built-in teaser or picks short moments in source order.</p></div>
               </li>
               <li>
                 <span>3</span>

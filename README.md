@@ -3,31 +3,32 @@
 This is a browser-only video preview maker. It does **not** use Render,
 a server, an API key, or cloud video uploads.
 
-This build works with any type of browser-playable video, not only barbershop
-content. It makes a 1-, 2-, 3-, 4-, or 5-minute *preview of the full video*,
-not a clip of only the opening. It reserves moments from the beginning, early
-process, middle, and ending. These chapters play in original source order,
-with original audio. A 2-minute preview has seven chapters. The exact length
-of each chapter depends on the chosen preview duration.
+This build works with browser-playable video of any subject, not only barber
+content. It makes 1-, 2-, 3-, 4-, or 5-minute fast-cut vertical previews with
+original audio. If the source already contains a rapid opening teaser, the
+app keeps that teaser by default. On the supplied 51-minute example, a
+1-minute preview uses short sections across about the first 68 seconds of
+the *existing* fast-cut opening;
+this is why its footage resembles the example from the other app. For longer
+previews, an opening section is followed by short shots from the rest of the
+video in source order. If there is no opening teaser, it selects roughly
+54–102 short shots across the source timeline (depending on output length).
 
-The default **Skip fast-cut opening previews** option looks for an unusually
-rapid opening montage followed by sustained footage. If detected, the short
-begins with the main video after that montage. Turn the option off when the
-fast opening is important, such as a sports highlight compilation.
-If the automatic detection misses an opening, expand **Optional: correct the starting point** and enter **Start after opening**
-as `minutes:seconds` (for example `1:18`). This manual start time takes priority
-over the automatic checkbox, and the finished result displays the source
-timestamps so you can confirm where each chapter came from. The field clears
-when you choose a different original video.
+To exclude a built-in teaser, select **Skip the video's own opening teaser**.
+If automatic detection misses one, expand **Optional: correct the starting
+point** and enter where the main video begins as `minutes:seconds` (for example
+`1:18`). The manual start overrides the opening setting. The completed
+result lists the source timestamps used.
 
 The default framing stays closer to the center of the original scene when
 automatic face detection is unavailable. Choose **Show the entire original frame** when people, text,
 objects, or a process do not fit together in a vertical crop. The completed
 result includes an ordered list of source timestamps so you can review the
-selection. This browser-only build uses the timeline, visible activity, and
-picture quality; it cannot understand the exact meaning of an event or identify
-the main subject reliably in every video. It is a cross-platform preview maker,
-not a semantic AI editor. Review each result before publishing.
+selection. Without an already edited teaser, this browser-only build scores
+visible activity and picture quality; it cannot understand events or identify
+the main subject reliably in every video. It cannot guarantee a human-quality
+montage from arbitrary two-hour videos without a video-understanding service
+or manual review. Check the output before publishing.
 
 ## Put it on GitHub
 
