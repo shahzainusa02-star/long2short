@@ -355,17 +355,12 @@
       state.teaserEnd = manualStart === null
         ? await detectIntroPreview(pipeline.video, state.sourceDuration, targetSeconds)
         : 0;
-      state.skippedPreview = manualStart !== null
-        ? manualStart
-        : state.avoidPreview ? state.teaserEnd : 0;
+      const openingPlan = planOpening(targetSeconds, state.teaserEnd, state.avoidPreview, manualStart);
+      state.skippedPreview = openingPlan.skippedPreview;
       state.skipMethod = manualStart !== null ? "manual" : state.skippedPreview ? "automatic" : null;
-      const teaserLength = manualStart === null && !state.avoidPreview && state.teaserEnd
-        ? targetSeconds <= state.teaserEnd - 2
-          ? targetSeconds
-          : Math.min(state.teaserEnd - 2, 60, Math.max(28, targetSeconds * 0.28))
-        : 0;
+      const teaserLength = openingPlan.teaserLength;
       state.usedOpeningTeaser = teaserLength > 0;
-      const sourceStart = teaserLength ? state.teaserEnd : state.skippedPreview;
+      const sourceStart = openingPlan.sourceStart;
       const contentSeconds = targetSeconds - teaserLength;
       const candidates = contentSeconds < 0.01 || state.sourceDuration - sourceStart <= contentSeconds * 1.12
         ? []
@@ -503,20 +498,46 @@
     setProgress(2, "Checking the opening", "Looking for an existing fast-cut teaser to reuse…", "Keep this page open");
     for (let time = 0; time <= probeEnd; time += step) {
       throwIfCancelled();
-      await seekVideo(video, time);
-      // Some browsers signal `seeked` before the paused frame has been painted.
-      // Waiting for a paint prevents identical, stale frames from hiding a montage.
+      // Register before seeking: `seeked` alone can report success while canvas
+      // still contains the previous frame. That made real browser exports miss
+      // pre-edited openings that were detected correctly in offline tests.
+      const decoded = waitForDecodedVideoFrame(video, time);
+      try {
+        await seekVideo(video, time);
+      } finally {
+        await decoded;
+      }
       await waitForPaint();
       const current = readGrayFrame(video, context, width, height);
       if (previous) differences.push(frameDifference(previous, current, width, height, 0, 0));
       previous = current;
-      if (differences.length === 12 && differences.filter((value) => value >= 42).length < 6) return 0;
       const previewEnd = locateIntroPreview(differences, step);
       if (previewEnd) return previewEnd;
       if (time % 18 === 0) await waitForPaint();
     }
 
     return 0;
+  }
+
+  function waitForDecodedVideoFrame(video, target) {
+    if (typeof video.requestVideoFrameCallback !== "function") return Promise.resolve();
+    return new Promise((resolve) => {
+      let callbackId = null;
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        if (callbackId !== null) video.cancelVideoFrameCallback?.(callbackId);
+        resolve();
+      };
+      const check = (_, metadata) => {
+        if (Math.abs(metadata.mediaTime - target) <= 0.5) finish();
+        else if (!settled) callbackId = video.requestVideoFrameCallback(check);
+      };
+      const timeout = window.setTimeout(finish, 450);
+      callbackId = video.requestVideoFrameCallback(check);
+    });
   }
 
   function locateIntroPreview(differences, step = 3) {
@@ -537,6 +558,17 @@
       return Math.round((index + 1) * step);
     }
     return 0;
+  }
+
+  function planOpening(targetSeconds, teaserEnd, avoidPreview, manualStart) {
+    // A complete built-in montage is a useful one-minute preview. Placing its
+    // ending before the start of a longer chronological edit would make the
+    // story jump backwards, so longer previews begin with the main footage.
+    const keepEditedOpening = manualStart === null && !avoidPreview &&
+      targetSeconds <= 60 && teaserEnd >= targetSeconds + 2;
+    const teaserLength = keepEditedOpening ? targetSeconds : 0;
+    const skippedPreview = keepEditedOpening ? 0 : manualStart ?? teaserEnd;
+    return { teaserLength, skippedPreview, sourceStart: teaserLength ? teaserEnd : skippedPreview };
   }
 
   function parseSourceStart(raw) {
@@ -742,26 +774,37 @@
     }
 
     const clipCount = Math.max(12, Math.round(previewChapterCount(targetSeconds) * remaining / targetSeconds));
-    const segmentLengths = distributeFastDuration(remaining, clipCount);
-    const usableDuration = sourceDuration - sourceStart;
-    const clipLength = remaining / clipCount;
-    const sourceGap = Math.min(usableDuration / clipCount * 0.12,
-      Math.max(0, (usableDuration - remaining) / (clipCount - 1) * 0.45));
-    const pool = candidates.map((candidate) => ({
+    // A timeline sampled uniformly right up to its last second gives the
+    // outcome only one tiny shot. Save a visible closing chapter for any long
+    // video, regardless of its subject or the type of activity it contains.
+    const closingWindow = Math.min(120, Math.max(42, sourceDuration * 0.035));
+    const closingStart = sourceDuration - closingWindow;
+    const hasClosing = sourceDuration >= 300 && closingStart - sourceStart > remaining * 1.12;
+    const closingSeconds = hasClosing ? Math.min(18, Math.max(6, Math.round(targetSeconds * 0.1))) : 0;
+    const closingCount = hasClosing ? Math.min(8, Math.max(3, Math.round(closingSeconds / 2))) : 0;
+    const bodySeconds = remaining - closingSeconds;
+    const bodyCount = clipCount - closingCount;
+    const bodyEnd = hasClosing ? closingStart : sourceDuration;
+    const segmentLengths = distributeFastDuration(bodySeconds, bodyCount);
+    const usableDuration = bodyEnd - sourceStart;
+    const clipLength = bodySeconds / bodyCount;
+    const sourceGap = Math.min(usableDuration / bodyCount * 0.12,
+      Math.max(0, (usableDuration - bodySeconds) / (bodyCount - 1) * 0.45));
+    const pool = candidates.filter((candidate) => candidate.time < bodyEnd).map((candidate) => ({
       ...candidate,
-      start: clamp(candidate.time - clipLength / 2, sourceStart, sourceDuration - clipLength)
+      start: clamp(candidate.time - clipLength / 2, sourceStart, bodyEnd - clipLength)
     }));
     const selected = [];
 
-    for (let index = 0; index < clipCount; index += 1) {
+    for (let index = 0; index < bodyCount; index += 1) {
       const previous = selected.at(-1);
       const earliest = previous ? previous.start + previous.length + sourceGap : sourceStart;
       const remainingLengths = segmentLengths.slice(index).reduce((sum, value) => sum + value, 0);
-      const latest = sourceDuration - remainingLengths - (clipCount - index - 1) * sourceGap;
-      const ratio = index === clipCount - 1 ? 0.985 : index / (clipCount - 1) * 0.965;
+      const latest = bodyEnd - remainingLengths - (bodyCount - index - 1) * sourceGap;
+      const ratio = index === bodyCount - 1 ? 0.985 : index / (bodyCount - 1) * 0.965;
       const expectedStart = sourceStart + usableDuration * ratio;
       const anchor = clamp(expectedStart, earliest, Math.max(earliest, latest));
-      const radius = Math.max(clipLength * 2, usableDuration / clipCount * (index === clipCount - 1 ? 1.2 : 0.75));
+      const radius = Math.max(clipLength * 2, usableDuration / bodyCount * (index === bodyCount - 1 ? 1.2 : 0.75));
       const valid = pool.filter((item) => item.start >= earliest && item.start <= latest);
       const near = valid.filter((item) => Math.abs(item.start - anchor) <= radius);
       const choice = (near.length ? near : valid)
@@ -776,7 +819,24 @@
       });
     }
 
-    return [...opening, ...placeSegmentsInSourceOrder(selected, sourceDuration, sourceStart)];
+    const body = placeSegmentsInSourceOrder(selected, bodyEnd, sourceStart);
+    const closing = hasClosing ? selectClosingSegments(closingStart, sourceDuration, closingSeconds, closingCount) : [];
+    return [...opening, ...body, ...closing];
+  }
+
+  function selectClosingSegments(start, end, seconds, count) {
+    const finalHold = Math.min(seconds - (count - 1) * 0.75, Math.max(3, seconds * 0.25));
+    const lengths = [...distributeFastDuration(seconds - finalHold, count - 1), finalHold];
+    const lastStart = end - finalHold - 0.35;
+    const openingSpan = Math.max(0, lastStart - start - lengths.slice(0, -1).reduce((sum, value) => sum + value, 0));
+    let earliest = start;
+    return lengths.map((length, index) => {
+      const isLast = index === count - 1;
+      const position = isLast ? lastStart : start + openingSpan * index / (count - 1);
+      const segmentStart = clamp(position, earliest, end - length);
+      earliest = segmentStart + length;
+      return { start: segmentStart, length, focusX: 0.5, score: 1, isClosing: true };
+    });
   }
 
   function previewChapterCount(targetSeconds) {

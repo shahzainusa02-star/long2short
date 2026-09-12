@@ -5,16 +5,17 @@ a server, an API key, or cloud video uploads.
 
 This build works with browser-playable video of any subject, not only barber
 content. It makes 1-, 2-, 3-, 4-, or 5-minute fast-cut vertical previews with
-original audio. If the source already contains a rapid opening teaser, the
-app keeps that teaser by default. On the supplied 51-minute example, a
-1-minute preview uses short sections across about the first 68 seconds of
-the *existing* fast-cut opening;
-this is why its footage resembles the example from the other app. For longer
-previews, an opening section is followed by short shots from the rest of the
-video in source order. If there is no opening teaser, it selects roughly
-54–102 short shots across the source timeline (depending on output length).
+original audio. If the source already contains a rapid opening teaser, a
+1-minute preview can use short sections across that *existing* fast-cut opening.
+For 2–5 minute previews, the app skips a detected opening teaser so the story
+doesn't start at the end and then jump back to the main video. It selects short
+shots in source order and reserves roughly the last 10% of each preview for
+the source video's ending, including a longer final shot. When the source
+has no edited opening, it samples across the entire timeline.
 
-To exclude a built-in teaser, select **Skip the video's own opening teaser**.
+To exclude a built-in teaser from a 1-minute result, select
+**Skip the video's own opening teaser**. Longer previews skip a detected teaser
+automatically to preserve the order of events.
 If automatic detection misses one, expand **Optional: correct the starting
 point** and enter where the main video begins as `minutes:seconds` (for example
 `1:18`). The manual start overrides the opening setting. The completed

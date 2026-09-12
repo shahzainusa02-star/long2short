@@ -16,8 +16,8 @@
       type="image/svg+xml"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23090b12'/%3E%3Cpath d='M18 14h15c10 0 17 7 17 18s-7 18-17 18H18z' fill='%237c5cff'/%3E%3Cpath d='M28 23l15 9-15 9z' fill='white'/%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="./styles.css?v=7" />
-    <script src="./app.js?v=7" defer></script>
+    <link rel="stylesheet" href="./styles.css?v=8" />
+    <script src="./app.js?v=8" defer></script>
   </head>
   <body>
     <header class="topbar">
@@ -40,8 +40,8 @@
           <h1 id="pageTitle">Long video in.<br />Fast-cut preview out.</h1>
           <p class="intro-copy">
             Choose a long video and an output length. Long2Short scans the video locally,
-            makes a fast-cut 1–5 minute preview, keeps an existing opening teaser when there is one,
-            reframes to vertical, and preserves the original audio.
+            makes a fast-cut 1–5 minute preview, keeps an existing edited opening for a 1-minute preview,
+            and follows the main video in order for longer previews. Original audio is kept.
           </p>
         </div>
         <div class="format-strip" aria-label="Output details">
@@ -124,19 +124,19 @@
               <option value="balanced">People + action (recommended)</option>
               <option value="whole">Show the entire original frame</option>
             </select>
-            <p>Works for any kind of video. Choose the entire frame if people, objects, or a process are spread far apart. For videos without an opening teaser, automatic cuts sample across the whole timeline; review the result before sharing.</p>
+            <p>Works for any kind of video. Choose the entire frame if people, objects, or a process are spread far apart. Automatic cuts sample across the whole timeline; review the result before sharing.</p>
           </div>
 
           <label class="preview-option" for="avoidPreview">
             <input id="avoidPreview" type="checkbox" />
-            <span><b>Skip the video's own opening teaser (optional)</b><small>Leave this off to keep a fast-cut opening like your reference. Turn on only when you want to start with the main footage.</small></span>
+            <span><b>Skip the video's own opening teaser (optional)</b><small>For 1-minute previews, leave this off to use a ready-made opening like your reference. Longer previews start with the main video automatically, so the steps stay in order.</small></span>
           </label>
 
           <details class="start-control">
             <summary>Optional: correct the starting point</summary>
             <label for="openingStart">Start after opening</label>
             <input id="openingStart" type="text" placeholder="minutes:seconds, e.g. 1:18" autocomplete="off" spellcheck="false" aria-describedby="openingStartHelp" />
-            <p id="openingStartHelp">Usually leave this empty. Enter a time only when you want to skip an opening that was not recognized automatically.</p>
+            <p id="openingStartHelp">Usually leave this empty. If a longer preview repeats the opening, enter where the main video begins; for the example video, use 1:18.</p>
           </details>
 
           <div class="output-plan">
