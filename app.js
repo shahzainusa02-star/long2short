@@ -5,7 +5,7 @@
   const OUTPUT_HEIGHT = 1280;
   const TARGET_ASPECT = OUTPUT_WIDTH / OUTPUT_HEIGHT;
   const RENDER_FPS = 30;
-  const HIGHLIGHT_SECONDS = 12;
+  const HIGHLIGHT_SECONDS = 30;
 
   const ui = {
     body: document.body,
@@ -18,6 +18,7 @@
     sourceNote: document.getElementById("sourceNote"),
     replaceBtn: document.getElementById("replaceBtn"),
     durationButtons: [...document.querySelectorAll(".duration-button")],
+    framingMode: document.getElementById("framingMode"),
     createBtn: document.getElementById("createBtn"),
     createBtnLabel: document.querySelector("#createBtn span"),
     formatNote: document.getElementById("formatNote"),
@@ -33,6 +34,7 @@
     resultPanel: document.getElementById("resultPanel"),
     resultVideo: document.getElementById("resultVideo"),
     resultMeta: document.getElementById("resultMeta"),
+    sourceTimeline: document.getElementById("sourceTimeline"),
     downloadBtn: document.getElementById("downloadBtn"),
     shareBtn: document.getElementById("shareBtn"),
     makeAnotherBtn: document.getElementById("makeAnotherBtn"),
@@ -48,6 +50,7 @@
     sourceUrl: "",
     sourceDuration: 0,
     outputMinutes: 2,
+    framingMode: "balanced",
     running: false,
     cancelled: false,
     activeVideo: null,
@@ -129,6 +132,10 @@
         });
         refreshCreateState();
       });
+    });
+
+    ui.framingMode.addEventListener("change", () => {
+      if (!state.running) state.framingMode = ui.framingMode.value;
     });
 
     ui.createBtn.addEventListener("click", startProcessing);
@@ -251,7 +258,7 @@
       ui.sourceNote.textContent = `This video is ${formatDuration(state.sourceDuration)}. Choose a shorter output length.`;
       ui.sourceNote.style.color = "var(--warning)";
     } else {
-      ui.sourceNote.textContent = `Ready to create ${state.outputMinutes} minute${state.outputMinutes === 1 ? "" : "s"} from the full timeline.`;
+      ui.sourceNote.textContent = `Ready for ${state.outputMinutes} minute${state.outputMinutes === 1 ? "" : "s"} of ordered moments from the full timeline.`;
       ui.sourceNote.style.color = "";
     }
   }
@@ -326,14 +333,14 @@
       const candidates = await analyzeVideo(pipeline.video, state.sourceDuration, targetSeconds);
       throwIfCancelled();
 
-      setProgress(35, "Choosing the best moments", "Balancing highlights across the full timeline…", "Selection almost ready");
+      setProgress(35, "Choosing the best moments", "Keeping longer moments in the original order…", "Selection almost ready");
       const selectedSegments = selectSegments(candidates, targetSeconds, state.sourceDuration);
       const segments = await refineSegmentSafety(pipeline.video, selectedSegments, state.sourceDuration);
       throwIfCancelled();
 
       const result = await renderSegments(pipeline, segments, targetSeconds);
       throwIfCancelled();
-      showResult(result, segments.length);
+      showResult(result, segments);
     } catch (error) {
       if (error instanceof CancelledError || state.cancelled) {
         setProgress(0, "Processing cancelled", "No output file was saved.", "Choose Create when you are ready");
@@ -442,7 +449,7 @@
   }
 
   async function analyzeVideo(video, duration, targetSeconds) {
-    const clipCount = Math.ceil(targetSeconds / HIGHLIGHT_SECONDS);
+    const clipCount = Math.max(3, Math.ceil(targetSeconds / HIGHLIGHT_SECONDS));
     const sampleCount = Math.min(
       180,
       Math.max(42, clipCount * 5, Math.ceil(duration / 45))
@@ -587,12 +594,12 @@
     candidates.forEach((candidate, index) => {
       const centerSafety = 1 - Math.abs(candidate.focusX - 0.5) * 0.42;
       candidate.score =
-        motion[index] * 0.4 +
-        sharpness[index] * 0.24 +
-        exposure[index] * 0.14 +
-        composition[index] * 0.18 +
-        centerSafety * 0.04 -
-        camera[index] * 0.22;
+        motion[index] * 0.22 +
+        sharpness[index] * 0.28 +
+        exposure[index] * 0.22 +
+        composition[index] * 0.22 +
+        centerSafety * 0.06 -
+        camera[index] * 0.18;
     });
 
     if (candidates.length >= 3) {
@@ -626,7 +633,7 @@
     }
 
     const clipLength = HIGHLIGHT_SECONDS;
-    const clipCount = Math.ceil(targetSeconds / clipLength);
+    const clipCount = Math.max(3, Math.ceil(targetSeconds / clipLength));
     const segmentLengths = distributeDuration(targetSeconds, clipCount);
     const pool = candidates.map((candidate) => ({
       ...candidate,
@@ -668,15 +675,28 @@
       });
     }
 
-    return selected
+    const ordered = selected
       .slice(0, clipCount)
-      .sort((a, b) => a.start - b.start)
+      .sort((a, b) => a.time - b.time)
       .map((candidate, index) => ({
-        start: clamp(candidate.start, 0, sourceDuration - segmentLengths[index]),
+        start: clamp(candidate.time - segmentLengths[index] / 2, 0, sourceDuration - segmentLengths[index]),
         length: segmentLengths[index],
         focusX: candidate.focusX,
         score: candidate.score
       }));
+    return placeSegmentsInSourceOrder(ordered, sourceDuration);
+  }
+
+  function placeSegmentsInSourceOrder(segments, sourceDuration) {
+    let previousEnd = 0;
+    return segments.map((segment, index) => {
+      const remaining = segments.slice(index + 1).reduce((sum, item) => sum + item.length + 0.1, 0);
+      const minimum = previousEnd + (index ? 0.1 : 0);
+      const maximum = Math.max(minimum, sourceDuration - segment.length - remaining);
+      const start = clamp(segment.start, minimum, maximum);
+      previousEnd = start + segment.length;
+      return { ...segment, start };
+    });
   }
 
   function isFarEnough(candidate, selected, clipLength) {
@@ -709,7 +729,10 @@
       let best = null;
 
       for (const shift of shifts) {
-        const start = clamp(segment.start + shift, 0, sourceDuration - segment.length);
+        const start = segment.start + shift;
+        const previousEnd = refined.length ? refined[refined.length - 1].start + refined[refined.length - 1].length : 0;
+        const nextStart = segments[index + 1]?.start ?? sourceDuration;
+        if (start < previousEnd + (index ? 0.08 : 0) || start + segment.length > nextStart - (index + 1 < segments.length ? 0.08 : 0)) continue;
         const candidate = { ...segment, start };
         if (overlapsEarlierSegment(candidate, refined)) continue;
 
@@ -729,7 +752,7 @@
       if (index % 3 === 2) await waitForPaint();
     }
 
-    return refined.sort((a, b) => a.start - b.start);
+    return refined;
   }
 
   async function measureVisualRisk(video, context, width, height, segment) {
@@ -1013,13 +1036,18 @@
   function drawVerticalFrame(video, context, tracker, forceTrack) {
     tracker.frame += 1;
     if (forceTrack || tracker.frame % 3 === 0) updateCropTracker(video, tracker);
-    if (forceTrack || tracker.frame % 15 === 0) requestFaceFocus(video, tracker);
+    if (state.framingMode === "balanced" && (forceTrack || tracker.frame % 15 === 0)) requestFaceFocus(video, tracker);
     tracker.focus += (tracker.target - tracker.focus) * 0.055;
 
     const sourceWidth = video.videoWidth;
     const sourceHeight = video.videoHeight;
     if (!sourceWidth || !sourceHeight) return;
     if (tracker.blockDarkFrame && tracker.hasGoodFrame) return;
+    if (state.framingMode === "whole") {
+      drawContainedFrame(video, context, sourceWidth, sourceHeight);
+      tracker.hasGoodFrame = true;
+      return;
+    }
     const sourceAspect = sourceWidth / sourceHeight;
     let sourceX = 0;
     let sourceY = 0;
@@ -1048,6 +1076,25 @@
       OUTPUT_HEIGHT
     );
     tracker.hasGoodFrame = true;
+  }
+
+  function drawContainedFrame(video, context, sourceWidth, sourceHeight) {
+    const coverScale = Math.max(OUTPUT_WIDTH / sourceWidth, OUTPUT_HEIGHT / sourceHeight);
+    const coverWidth = sourceWidth * coverScale;
+    const coverHeight = sourceHeight * coverScale;
+    context.fillStyle = "#10131c";
+    context.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+    context.save();
+    context.globalAlpha = 0.22;
+    context.drawImage(video, (OUTPUT_WIDTH - coverWidth) / 2, (OUTPUT_HEIGHT - coverHeight) / 2, coverWidth, coverHeight);
+    context.restore();
+    context.fillStyle = "rgba(7, 9, 16, 0.65)";
+    context.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+
+    const fitScale = Math.min(OUTPUT_WIDTH / sourceWidth, OUTPUT_HEIGHT / sourceHeight);
+    const fitWidth = sourceWidth * fitScale;
+    const fitHeight = sourceHeight * fitScale;
+    context.drawImage(video, (OUTPUT_WIDTH - fitWidth) / 2, (OUTPUT_HEIGHT - fitHeight) / 2, fitWidth, fitHeight);
   }
 
   function updateCropTracker(video, tracker) {
@@ -1083,8 +1130,8 @@
         const motion = tracker.previous ? Math.min(48, Math.abs(gray[index] - tracker.previous[index])) : 0;
         const centerPrior = 0.45 + 0.55 * Math.exp(-Math.pow((x / width - 0.5) / 0.34, 2));
         const verticalPosition = y / height;
-        const faceBand = 0.38 + 0.62 * Math.exp(-Math.pow((verticalPosition - 0.36) / 0.3, 2));
-        const salience = (edge * 0.52 + motion * 0.58) * centerPrior * faceBand;
+        const verticalWeight = 0.8 + 0.2 * Math.exp(-Math.pow((verticalPosition - 0.5) / 0.4, 2));
+        const salience = (edge * 0.42 + motion * 0.75) * centerPrior * verticalWeight;
         columns[x] += salience;
         total += salience;
         weightedX += salience * x;
@@ -1093,21 +1140,15 @@
 
     if (total > 0) {
       const rawDetected = weightedX / total / width;
-      const safeLeft = Math.max(0.18, tracker.initialFocus - 0.18);
-      const safeRight = Math.min(0.82, tracker.initialFocus + 0.18);
-      const detected = clamp(rawDetected, safeLeft, safeRight);
+      const detected = clamp(rawDetected, 0.14, 0.86);
       tracker.visualFocus = detected;
-      let target = detected * 0.5 + tracker.initialFocus * 0.5;
+      let target = detected * 0.7 + tracker.initialFocus * 0.3;
 
       if (tracker.faceFocus !== null && performance.now() - tracker.faceSeenAt < 1300) {
-        target = tracker.faceFocus * 0.72 + detected * 0.28;
+        target = tracker.faceFocus * 0.45 + detected * 0.55;
       }
 
-      tracker.target = clamp(
-        target,
-        Math.max(0.17, tracker.initialFocus - 0.24),
-        Math.min(0.83, tracker.initialFocus + 0.24)
-      );
+      tracker.target = clamp(target, 0.13, 0.87);
     }
     tracker.previous = gray;
   }
@@ -1132,17 +1173,16 @@
     detector.detect(video)
       .then((faces) => {
         if (!faces?.length) return;
-        const reference = tracker.visualFocus ?? tracker.focus;
-        const ranked = faces
+        const relevant = faces
           .map((face) => {
             const box = face.boundingBox;
             const centerX = (box.x + box.width / 2) / Math.max(1, video.videoWidth);
-            const size = Math.sqrt(Math.max(1, box.width * box.height));
-            const proximity = 1.2 - Math.min(1, Math.abs(centerX - reference)) * 0.72;
-            return { centerX, score: size * proximity };
+            return { centerX, area: Math.max(1, box.width * box.height) };
           })
-          .sort((a, b) => b.score - a.score);
-        tracker.faceFocus = clamp(ranked[0].centerX, 0.16, 0.84);
+          .sort((a, b) => b.area - a.area)
+          .slice(0, 3);
+        const centers = relevant.map((face) => face.centerX);
+        tracker.faceFocus = clamp((Math.min(...centers) + Math.max(...centers)) / 2, 0.12, 0.88);
         tracker.faceSeenAt = performance.now();
       })
       .catch(() => null)
@@ -1151,14 +1191,19 @@
       });
   }
 
-  function showResult(result, segmentCount) {
+  function showResult(result, segments) {
     state.resultBlob = result.blob;
     state.resultFileName = result.fileName;
     state.resultUrl = URL.createObjectURL(result.blob);
     ui.resultVideo.src = state.resultUrl;
     ui.downloadBtn.href = state.resultUrl;
     ui.downloadBtn.download = result.fileName;
-    ui.resultMeta.textContent = `${state.outputMinutes}-minute vertical video • ${segmentCount} selected moments • ${formatBytes(result.blob.size)} • ${result.mimeType.includes("mp4") ? "MP4" : "WebM"}`;
+    ui.resultMeta.textContent = `${state.outputMinutes}-minute vertical video • ${segments.length} ordered moments • ${formatBytes(result.blob.size)} • ${result.mimeType.includes("mp4") ? "MP4" : "WebM"}`;
+    ui.sourceTimeline.replaceChildren(...segments.map((segment) => {
+      const row = document.createElement("li");
+      row.textContent = `${formatDuration(segment.start)} to ${formatDuration(segment.start + segment.length)} in the original video`;
+      return row;
+    }));
 
     const shareFile = new File([result.blob], result.fileName, { type: result.mimeType });
     ui.shareBtn.hidden = !(navigator.canShare && navigator.canShare({ files: [shareFile] }));
@@ -1205,6 +1250,7 @@
     ui.durationButtons.forEach((button) => {
       button.disabled = locked;
     });
+    ui.framingMode.disabled = locked;
     if (locked) ui.createBtn.disabled = true;
   }
 

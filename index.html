@@ -117,14 +117,23 @@
             </div>
           </fieldset>
 
+          <div class="framing-control">
+            <label for="framingMode">Keep the important parts in view</label>
+            <select id="framingMode">
+              <option value="balanced">People + action (recommended)</option>
+              <option value="whole">Show the entire original frame</option>
+            </select>
+            <p>Works for any kind of video. Choose the entire frame if people, objects, or a process are spread far apart. Automatic selection uses visible activity; review the result before sharing.</p>
+          </div>
+
           <div class="output-plan">
             <div>
               <span class="plan-icon" aria-hidden="true">↗</span>
-              <span><b>Smart highlights</b><small>Balanced across the full video</small></span>
+              <span><b>Ordered highlights</b><small>Longer moments, in source order</small></span>
             </div>
             <div>
               <span class="plan-icon" aria-hidden="true">▯</span>
-              <span><b>Vertical crop</b><small>Follows the active area</small></span>
+              <span><b>Flexible framing</b><small>People and activity, or the full scene</small></span>
             </div>
             <div>
               <span class="plan-icon" aria-hidden="true">◖</span>
@@ -151,7 +160,7 @@
               </li>
               <li>
                 <span>2</span>
-                <div><b>Select</b><p>Picks clear, active, well-spaced highlights.</p></div>
+                <div><b>Select</b><p>Picks longer clear moments and keeps their original order.</p></div>
               </li>
               <li>
                 <span>3</span>
@@ -206,6 +215,10 @@
           <p class="step-label">FINISHED</p>
           <h2 id="resultTitle">Your short is ready</h2>
           <p id="resultMeta">Preview it, then save it to your device.</p>
+          <details class="source-timeline">
+            <summary>See the source timeline</summary>
+            <ol id="sourceTimeline"></ol>
+          </details>
           <div class="result-actions">
             <a class="primary-button download-button" id="downloadBtn" href="#" download>
               <span>Download video</span><span aria-hidden="true">↓</span>
