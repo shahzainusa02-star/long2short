@@ -33,8 +33,12 @@ point** and enter where the main video begins as `minutes:seconds` (for example
 `1:18`). The manual start overrides the opening setting. The completed
 result lists the source timestamps used.
 
-The default framing stays closer to the center of the original scene when
-automatic face detection is unavailable. Choose **Show the entire original frame** when people, text,
+The default framing now leaves more horizontal context and keeps the whole
+source frame height, with soft background bands when needed. Action and scene
+context outweigh face position in the crop, so tools, clients and other
+important objects are less likely to be excluded. This also uses fewer,
+longer clips so a process or tutorial step remains visible instead of being
+cut to a one-second flash. Choose **Show the entire original frame** when people, text,
 objects, or a process do not fit together in a vertical crop. The completed
 result includes an ordered list of source timestamps so you can review the
 selection. Without an already edited teaser, this browser-only build scores
