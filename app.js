@@ -20,7 +20,7 @@
     replaceBtn: document.getElementById("replaceBtn"),
     durationButtons: [...document.querySelectorAll(".duration-button")],
     framingMode: document.getElementById("framingMode"),
-    avoidPreview: document.getElementById("avoidPreview"),
+    useOpeningTeaser: document.getElementById("useOpeningTeaser"),
     openingStart: document.getElementById("openingStart"),
     createBtn: document.getElementById("createBtn"),
     createBtnLabel: document.querySelector("#createBtn span"),
@@ -54,7 +54,7 @@
     sourceDuration: 0,
     outputMinutes: 2,
     framingMode: "balanced",
-    avoidPreview: false,
+    useOpeningTeaser: false,
     teaserEnd: 0,
     usedOpeningTeaser: false,
     skippedPreview: 0,
@@ -145,8 +145,8 @@
     ui.framingMode.addEventListener("change", () => {
       if (!state.running) state.framingMode = ui.framingMode.value;
     });
-    ui.avoidPreview.addEventListener("change", () => {
-      if (!state.running) state.avoidPreview = ui.avoidPreview.checked;
+    ui.useOpeningTeaser.addEventListener("change", () => {
+      if (!state.running) state.useOpeningTeaser = ui.useOpeningTeaser.checked;
     });
 
     ui.createBtn.addEventListener("click", startProcessing);
@@ -355,7 +355,7 @@
       state.teaserEnd = manualStart === null
         ? await detectIntroPreview(pipeline.video, state.sourceDuration, targetSeconds)
         : 0;
-      const openingPlan = planOpening(targetSeconds, state.teaserEnd, state.avoidPreview, manualStart);
+      const openingPlan = planOpening(targetSeconds, state.teaserEnd, state.useOpeningTeaser, manualStart);
       state.skippedPreview = openingPlan.skippedPreview;
       state.skipMethod = manualStart !== null ? "manual" : state.skippedPreview ? "automatic" : null;
       const teaserLength = openingPlan.teaserLength;
@@ -495,7 +495,7 @@
     const differences = [];
     let previous = null;
 
-    setProgress(2, "Checking the opening", "Looking for an existing fast-cut teaser to reuse…", "Keep this page open");
+    setProgress(2, "Checking the opening", "Finding where the main video begins…", "Keep this page open");
     for (let time = 0; time <= probeEnd; time += step) {
       throwIfCancelled();
       // Register before seeking: `seeked` alone can report success while canvas
@@ -564,11 +564,11 @@
     return 0;
   }
 
-  function planOpening(targetSeconds, teaserEnd, avoidPreview, manualStart) {
-    // A complete built-in montage is a useful one-minute preview. Placing its
-    // ending before the start of a longer chronological edit would make the
-    // story jump backwards, so longer previews begin with the main footage.
-    const keepEditedOpening = manualStart === null && !avoidPreview &&
+  function planOpening(targetSeconds, teaserEnd, useOpeningTeaser, manualStart) {
+    // The default samples the whole main video in chronological order.
+    // An existing edited opening can be reused only when explicitly requested
+    // for a one-minute result, never before a longer edit that would jump back.
+    const keepEditedOpening = manualStart === null && useOpeningTeaser &&
       targetSeconds <= 60 && teaserEnd >= targetSeconds + 2;
     const teaserLength = keepEditedOpening ? targetSeconds : 0;
     const skippedPreview = keepEditedOpening ? 0 : manualStart ?? teaserEnd;
@@ -1576,7 +1576,7 @@
       button.disabled = locked;
     });
     ui.framingMode.disabled = locked;
-    ui.avoidPreview.disabled = locked;
+    ui.useOpeningTeaser.disabled = locked;
     ui.openingStart.disabled = locked;
     if (locked) ui.createBtn.disabled = true;
   }

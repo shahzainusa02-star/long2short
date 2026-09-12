@@ -5,10 +5,12 @@ a server, an API key, or cloud video uploads.
 
 This build works with browser-playable video of any subject, not only barber
 content. It makes 1-, 2-, 3-, 4-, or 5-minute fast-cut vertical previews with
-original audio. If the source already contains a rapid opening teaser, a
-1-minute preview can use short sections across that *existing* fast-cut opening.
-For 2–5 minute previews, the app skips a detected opening teaser so the story
-doesn't start at the end and then jump back to the main video. It selects short
+original audio. By default, every length (including 1 minute) skips a detected
+opening montage and selects scenes across the *full main video* in chronological
+order. If the source already contains a rapid opening teaser, you can explicitly
+choose to reuse it for a 1-minute preview instead. For 2–5 minute previews,
+the app always skips a detected opening teaser so the story doesn't start at
+the end and then jump back to the main video. It selects short
 shots in source order and reserves roughly the last 10% of each preview for
 the source video's ending, including a longer final shot. When the source
 has no edited opening, it samples across the entire timeline.
@@ -23,9 +25,9 @@ the story, identify people reliably on all browsers, or guarantee human edits.
 The recorder corrects for small capture gaps as it works. Output lengths may
 still vary slightly between devices; preview the downloaded result first.
 
-To exclude a built-in teaser from a 1-minute result, select
-**Skip the video's own opening teaser**. Longer previews skip a detected teaser
-automatically to preserve the order of events.
+To keep an already-edited opening in a 1-minute result, select
+**Reuse the video's own opening teaser**. Otherwise the app selects from the
+full main video. Longer previews always skip a detected teaser automatically.
 If automatic detection misses one, expand **Optional: correct the starting
 point** and enter where the main video begins as `minutes:seconds` (for example
 `1:18`). The manual start overrides the opening setting. The completed
