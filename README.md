@@ -13,6 +13,14 @@ shots in source order and reserves roughly the last 10% of each preview for
 the source video's ending, including a longer final shot. When the source
 has no edited opening, it samples across the entire timeline.
 
+This version checks that sampled frames have been decoded before ranking them,
+prefers visible activity or detail over empty shots, and avoids repeatedly
+using almost identical views when other nearby choices exist. This is based
+on pictures and motion only; it works for all subjects, but does not know
+the story, identify people reliably on all browsers, or guarantee human edits.
+The recorder corrects for small capture gaps as it works. Output lengths may
+still vary slightly between devices; preview the downloaded result first.
+
 To exclude a built-in teaser from a 1-minute result, select
 **Skip the video's own opening teaser**. Longer previews skip a detected teaser
 automatically to preserve the order of events.

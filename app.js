@@ -501,12 +501,7 @@
       // Register before seeking: `seeked` alone can report success while canvas
       // still contains the previous frame. That made real browser exports miss
       // pre-edited openings that were detected correctly in offline tests.
-      const decoded = waitForDecodedVideoFrame(video, time);
-      try {
-        await seekVideo(video, time);
-      } finally {
-        await decoded;
-      }
+      await seekDecodedVideo(video, time);
       await waitForPaint();
       const current = readGrayFrame(video, context, width, height);
       if (previous) differences.push(frameDifference(previous, current, width, height, 0, 0));
@@ -519,7 +514,16 @@
     return 0;
   }
 
-  function waitForDecodedVideoFrame(video, target) {
+  async function seekDecodedVideo(video, time, timeoutMs = 450) {
+    const decoded = waitForDecodedVideoFrame(video, time, timeoutMs);
+    try {
+      await seekVideo(video, time);
+    } finally {
+      await decoded;
+    }
+  }
+
+  function waitForDecodedVideoFrame(video, target, timeoutMs = 450) {
     if (typeof video.requestVideoFrameCallback !== "function") return Promise.resolve();
     return new Promise((resolve) => {
       let callbackId = null;
@@ -535,7 +539,7 @@
         if (Math.abs(metadata.mediaTime - target) <= 0.5) finish();
         else if (!settled) callbackId = video.requestVideoFrameCallback(check);
       };
-      const timeout = window.setTimeout(finish, 450);
+      const timeout = window.setTimeout(finish, timeoutMs);
       callbackId = video.requestVideoFrameCallback(check);
     });
   }
@@ -608,9 +612,9 @@
       const ratio = sampleCount === 1 ? 0.5 : index / (sampleCount - 1);
       const time = firstTime + (lastTime - firstTime) * ratio;
 
-      await seekVideo(video, time);
+      await seekDecodedVideo(video, time, 240);
       const firstFrame = readGrayFrame(video, context, width, height);
-      await seekVideo(video, Math.min(duration - 0.08, time + pairOffset));
+      await seekDecodedVideo(video, Math.min(duration - 0.08, time + pairOffset), 240);
       const secondFrame = readGrayFrame(video, context, width, height);
       const metrics = compareFrames(firstFrame, secondFrame, width, height);
       candidates.push({ time, ...metrics });
@@ -648,6 +652,8 @@
     let sharpness = 0;
     let salienceTotal = 0;
     let salienceWeightedX = 0;
+    let centralActivity = 0;
+    let centralPixels = 0;
     const columns = new Float64Array(width);
 
     for (let y = 1; y < height - 1; y += 2) {
@@ -665,6 +671,10 @@
         columns[x] += salience;
         salienceTotal += salience;
         salienceWeightedX += salience * x;
+        if (x > width * 0.16 && x < width * 0.84 && y > height * 0.1 && y < height * 0.9) {
+          centralActivity += edge > 22 || change > 12 ? 1 : 0;
+          centralPixels += 1;
+        }
       }
     }
 
@@ -699,8 +709,40 @@
       sharpness: sharpness / samples,
       exposure,
       composition: salienceTotal / samples,
+      subjectDetail: centralActivity / Math.max(1, centralPixels),
+      signature: frameSignature(second, width, height),
       focusX
     };
+  }
+
+  function frameSignature(frame, width, height) {
+    // A small image description lets us distinguish a nearby alternate shot
+    // from a nearly identical view, without downloading a model or looking
+    // for any specific object, person, or type of video.
+    const signature = [];
+    for (let row = 0; row < 6; row += 1) {
+      for (let column = 0; column < 10; column += 1) {
+        const centerX = Math.floor((column + 0.5) * width / 10);
+        const centerY = Math.floor((row + 0.5) * height / 6);
+        let sum = 0;
+        for (let y = -2; y <= 2; y += 2) {
+          for (let x = -2; x <= 2; x += 2) {
+            sum += frame[clamp(centerY + y, 0, height - 1) * width + clamp(centerX + x, 0, width - 1)];
+          }
+        }
+        signature.push(Math.round(sum / 9));
+      }
+    }
+    return signature;
+  }
+
+  function signatureDistance(first, second) {
+    if (!first?.length || first.length !== second?.length) return 0.5;
+    let difference = 0;
+    for (let index = 0; index < first.length; index += 1) {
+      difference += Math.abs(first[index] - second[index]);
+    }
+    return clamp(difference / first.length / 62, 0, 1);
   }
 
   function frameDifference(first, second, width, height, shiftX, shiftY) {
@@ -725,16 +767,21 @@
     const sharpness = robustNormalize(candidates.map((item) => item.sharpness));
     const exposure = candidates.map((item) => item.exposure);
     const composition = robustNormalize(candidates.map((item) => item.composition));
+    const subjectDetail = robustNormalize(candidates.map((item) => item.subjectDetail));
 
     candidates.forEach((candidate, index) => {
       const centerSafety = 1 - Math.abs(candidate.focusX - 0.5) * 0.42;
       candidate.score =
-        motion[index] * 0.22 +
-        sharpness[index] * 0.28 +
-        exposure[index] * 0.22 +
-        composition[index] * 0.22 +
-        centerSafety * 0.06 -
+        motion[index] * 0.21 +
+        sharpness[index] * 0.18 +
+        exposure[index] * 0.16 +
+        composition[index] * 0.17 +
+        subjectDetail[index] * 0.21 +
+        centerSafety * 0.07 -
         camera[index] * 0.18;
+      // A bright but almost empty or unchanging room should not beat a
+      // nearby shot of the actual action just because it is well exposed.
+      if (motion[index] < 0.2 && subjectDetail[index] < 0.2) candidate.score -= 0.18;
     });
 
     if (candidates.length >= 3) {
@@ -806,22 +853,32 @@
       const anchor = clamp(expectedStart, earliest, Math.max(earliest, latest));
       const radius = Math.max(clipLength * 2, usableDuration / bodyCount * (index === bodyCount - 1 ? 1.2 : 0.75));
       const valid = pool.filter((item) => item.start >= earliest && item.start <= latest);
-      const near = valid.filter((item) => Math.abs(item.start - anchor) <= radius);
+      const near = valid.filter((item) => Math.abs(item.start - anchor) <= radius * 1.55);
       const choice = (near.length ? near : valid)
-        .map((item) => ({ item, rank: item.score * 0.48 + clamp(1 - Math.abs(item.start - anchor) / radius, 0, 1) * 0.52 }))
+        .map((item) => ({ item, rank: rankCandidate(item, anchor, radius, selected) }))
         .sort((a, b) => b.rank - a.rank)[0]?.item;
       selected.push({
         start: index === 0 ? sourceStart
           : clamp(choice ? choice.time - segmentLengths[index] / 2 : anchor, earliest, Math.max(earliest, latest)),
         length: segmentLengths[index],
         focusX: choice?.focusX ?? 0.5,
-        score: choice?.score ?? 0
+        score: choice?.score ?? 0,
+        signature: choice?.signature
       });
     }
 
     const body = placeSegmentsInSourceOrder(selected, bodyEnd, sourceStart);
     const closing = hasClosing ? selectClosingSegments(closingStart, sourceDuration, closingSeconds, closingCount) : [];
     return [...opening, ...body, ...closing];
+  }
+
+  function rankCandidate(candidate, anchor, radius, selected) {
+    const recentSignatures = selected.slice(-3).map((item) => item.signature).filter(Boolean);
+    const distinctness = recentSignatures.length
+      ? Math.min(...recentSignatures.map((previous) => signatureDistance(candidate.signature, previous)))
+      : 0.5;
+    const closeness = clamp(1 - Math.abs(candidate.start - anchor) / (radius * 1.55), 0, 1);
+    return candidate.score * 0.56 + closeness * 0.28 + distinctness * 0.16;
   }
 
   function selectClosingSegments(start, end, seconds, count) {
@@ -1020,6 +1077,14 @@
     const { recorder, chunks, stopped } = recording;
     state.recorder = recorder;
     let completedSeconds = 0;
+    let plannedSeconds = 0;
+    const captureStartedAt = performance.now();
+    let pausedSince = null;
+    let totalPausedMs = 0;
+    const captureSeconds = () => {
+      const now = performance.now();
+      return Math.max(0, (now - captureStartedAt - totalPausedMs - (pausedSince === null ? 0 : now - pausedSince)) / 1000);
+    };
 
     try {
       for (let index = 0; index < segments.length; index += 1) {
@@ -1033,8 +1098,11 @@
         if (preparationError) throw preparationError;
         setActiveAudioSlot(gainNodes, activeSlot, audioContext);
         const tracker = createCropTracker(segment.focusX, video);
+        const renderLength = chooseRenderLength(segment, targetSeconds, completedSeconds,
+          plannedSeconds, captureSeconds(), index, segments.length - index);
+        const renderSegment = { ...segment, length: renderLength };
 
-        await playAndRenderSegment(video, context, tracker, segment, ({ elapsed }) => {
+        await playAndRenderSegment(video, context, tracker, renderSegment, ({ elapsed }) => {
           const totalRendered = completedSeconds + elapsed;
           const percent = 41 + (totalRendered / targetSeconds) * 57;
           setProgress(
@@ -1045,7 +1113,8 @@
             true
           );
         });
-        completedSeconds += segment.length;
+        completedSeconds += renderLength;
+        plannedSeconds += segment.length;
 
         const futureIndex = index + videos.length;
         if (futureIndex < segments.length) {
@@ -1061,6 +1130,7 @@
           await Promise.resolve();
           if (!isReady && recorder.state === "recording" && typeof recorder.pause === "function") {
             recorder.pause();
+            pausedSince = performance.now();
           }
           const nextError = await nextReady;
           if (nextError) throw nextError;
@@ -1069,7 +1139,11 @@
           setActiveAudioSlot(gainNodes, nextSlot, audioContext);
           const nextTracker = createCropTracker(segments[nextIndex].focusX, nextVideo);
           drawVerticalFrame(nextVideo, context, nextTracker, true);
-          if (recorder.state === "paused") recorder.resume();
+          if (recorder.state === "paused") {
+            recorder.resume();
+            if (pausedSince !== null) totalPausedMs += performance.now() - pausedSince;
+            pausedSince = null;
+          }
         }
       }
 
@@ -1097,6 +1171,24 @@
     const fileName = `${safeBase}-preview-${state.outputMinutes}m.${extension}`;
 
     return { blob, mimeType, fileName };
+  }
+
+  function chooseRenderLength(segment, targetSeconds, completedSeconds, plannedSeconds, capturedSeconds, completedCount, remainingCount) {
+    // MediaRecorder captures real time, including the small gaps between ready
+    // cuts. Trim those measured gaps gradually from upcoming shots, preserving
+    // the visible final result; no browser can promise frame-perfect MP4 length.
+    if (remainingCount < 1 || targetSeconds <= 0) return segment.length;
+    const observedGap = Math.max(0, capturedSeconds - completedSeconds);
+    const averageGap = completedCount >= 6 ? observedGap / completedCount : 0;
+    // A negative drift is useful credit from earlier cuts; do not keep
+    // shortening later clips once the output is already on time.
+    const uncorrectedDrift = capturedSeconds - plannedSeconds;
+    const correction = (uncorrectedDrift + averageGap * Math.max(0, remainingCount - 1) + 0.08) / remainingCount;
+    const isLast = remainingCount === 1 && segment.isClosing;
+    const maximumTrim = isLast
+      ? Math.min(0.18, Math.max(0, segment.length - 2.8))
+      : Math.min(0.13, Math.max(0.035, segment.length * 0.08));
+    return segment.length - clamp(correction, 0, maximumTrim);
   }
 
   function setActiveAudioSlot(gainNodes, activeSlot, audioContext) {
