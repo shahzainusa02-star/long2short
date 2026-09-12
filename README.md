@@ -4,12 +4,18 @@ This is a complete browser-only video short maker. It does **not** use Render,
 a server, an API key, or cloud video uploads.
 
 This build works with any type of browser-playable video, not only barbershop
-content. It selects longer 20–30 second moments from the beginning, middle, and
+content. It selects longer 20–26 second moments from the beginning, middle, and
 end of the source, keeps them in source order, preserves original audio, and
-uses preloaded joins and dark-frame protection.
+uses preloaded joins and dark-frame protection. A 2-minute result uses five
+ordered moments rather than repeating an opening teaser.
 
-The default framing balances people and visible activity instead of following
-the largest face. Choose **Show the entire original frame** when people, text,
+The default **Skip fast-cut opening previews** option looks for an unusually
+rapid opening montage followed by sustained footage. If detected, the short
+begins with the main video after that montage. Turn the option off when the
+fast opening is important, such as a sports highlight compilation.
+
+The default framing stays closer to the center of the original scene when
+automatic face detection is unavailable. Choose **Show the entire original frame** when people, text,
 objects, or a process do not fit together in a vertical crop. The completed
 result includes an ordered list of source timestamps so you can review the
 selection. This browser-only build scores visible activity and picture quality;

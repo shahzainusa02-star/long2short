@@ -16,8 +16,8 @@
       type="image/svg+xml"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23090b12'/%3E%3Cpath d='M18 14h15c10 0 17 7 17 18s-7 18-17 18H18z' fill='%237c5cff'/%3E%3Cpath d='M28 23l15 9-15 9z' fill='white'/%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="./styles.css" />
-    <script src="./app.js" defer></script>
+    <link rel="stylesheet" href="./styles.css?v=4" />
+    <script src="./app.js?v=4" defer></script>
   </head>
   <body>
     <header class="topbar">
@@ -125,6 +125,11 @@
             </select>
             <p>Works for any kind of video. Choose the entire frame if people, objects, or a process are spread far apart. Automatic selection uses visible activity; review the result before sharing.</p>
           </div>
+
+          <label class="preview-option" for="avoidPreview">
+            <input id="avoidPreview" type="checkbox" checked />
+            <span><b>Skip fast-cut opening previews</b><small>Start with the real action when the video opens with a rapid highlight montage. Turn off for videos where the fast opening matters.</small></span>
+          </label>
 
           <div class="output-plan">
             <div>

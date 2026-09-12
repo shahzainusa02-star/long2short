@@ -540,6 +540,35 @@ h2 {
   line-height: 1.4;
 }
 
+.preview-option {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  margin-top: 18px;
+  border: 1px solid var(--stroke);
+  border-radius: 12px;
+  background: #1a1e2d;
+  cursor: pointer;
+}
+
+.preview-option input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  flex: 0 0 18px;
+  accent-color: var(--accent-light);
+}
+
+.preview-option span {
+  display: grid;
+  gap: 4px;
+}
+
+.preview-option b { font-size: 0.87rem; }
+.preview-option small { color: var(--muted); line-height: 1.42; }
+.preview-option:focus-within { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+
 .output-plan {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

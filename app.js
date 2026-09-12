@@ -5,7 +5,7 @@
   const OUTPUT_HEIGHT = 1280;
   const TARGET_ASPECT = OUTPUT_WIDTH / OUTPUT_HEIGHT;
   const RENDER_FPS = 30;
-  const HIGHLIGHT_SECONDS = 30;
+  const HIGHLIGHT_SECONDS = 26;
 
   const ui = {
     body: document.body,
@@ -19,6 +19,7 @@
     replaceBtn: document.getElementById("replaceBtn"),
     durationButtons: [...document.querySelectorAll(".duration-button")],
     framingMode: document.getElementById("framingMode"),
+    avoidPreview: document.getElementById("avoidPreview"),
     createBtn: document.getElementById("createBtn"),
     createBtnLabel: document.querySelector("#createBtn span"),
     formatNote: document.getElementById("formatNote"),
@@ -51,6 +52,8 @@
     sourceDuration: 0,
     outputMinutes: 2,
     framingMode: "balanced",
+    avoidPreview: true,
+    skippedPreview: 0,
     running: false,
     cancelled: false,
     activeVideo: null,
@@ -136,6 +139,9 @@
 
     ui.framingMode.addEventListener("change", () => {
       if (!state.running) state.framingMode = ui.framingMode.value;
+    });
+    ui.avoidPreview.addEventListener("change", () => {
+      if (!state.running) state.avoidPreview = ui.avoidPreview.checked;
     });
 
     ui.createBtn.addEventListener("click", startProcessing);
@@ -330,12 +336,15 @@
       await Promise.all([pipeline.ready, requestWakeLock()]);
       throwIfCancelled();
 
-      const candidates = await analyzeVideo(pipeline.video, state.sourceDuration, targetSeconds);
+      state.skippedPreview = state.avoidPreview
+        ? await detectIntroPreview(pipeline.video, state.sourceDuration, targetSeconds)
+        : 0;
+      const candidates = await analyzeVideo(pipeline.video, state.sourceDuration, targetSeconds, state.skippedPreview);
       throwIfCancelled();
 
       setProgress(35, "Choosing the best moments", "Keeping longer moments in the original order…", "Selection almost ready");
-      const selectedSegments = selectSegments(candidates, targetSeconds, state.sourceDuration);
-      const segments = await refineSegmentSafety(pipeline.video, selectedSegments, state.sourceDuration);
+      const selectedSegments = selectSegments(candidates, targetSeconds, state.sourceDuration, state.skippedPreview);
+      const segments = await refineSegmentSafety(pipeline.video, selectedSegments, state.sourceDuration, state.skippedPreview);
       throwIfCancelled();
 
       const result = await renderSegments(pipeline, segments, targetSeconds);
@@ -448,14 +457,60 @@
     };
   }
 
-  async function analyzeVideo(video, duration, targetSeconds) {
+  async function detectIntroPreview(video, duration, targetSeconds) {
+    if (duration < 300 || duration - targetSeconds < 120) return 0;
+    const step = 3;
+    const probeEnd = Math.min(150, duration - targetSeconds - 1);
+    const width = 96;
+    const height = clamp(Math.round(width * video.videoHeight / video.videoWidth), 54, 108);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    const differences = [];
+    let previous = null;
+
+    setProgress(2, "Checking the opening", "Looking for a fast-cut preview before the real video begins…", "Keep this page open");
+    for (let time = 0; time <= probeEnd; time += step) {
+      throwIfCancelled();
+      await seekVideo(video, time);
+      const current = readGrayFrame(video, context, width, height);
+      if (previous) differences.push(frameDifference(previous, current, width, height, 0, 0));
+      previous = current;
+      if (differences.length === 12 && differences.filter((value) => value >= 45).length < 9) return 0;
+      const previewEnd = locateIntroPreview(differences, step);
+      if (previewEnd) return previewEnd;
+      if (time % 18 === 0) await waitForPaint();
+    }
+
+    return 0;
+  }
+
+  function locateIntroPreview(differences, step = 3) {
+    // Only remove an opening with many quick cuts followed by sustained footage.
+    // A busy opening that stays busy is content, not a detectable teaser.
+    if (differences.length < 21) return 0;
+    const hasFastOpening = differences.slice(0, 12).filter((value) => value >= 45).length >= 9;
+    if (!hasFastOpening) return 0;
+
+    for (let index = 14; index + 7 <= differences.length; index += 1) {
+      const before = differences.slice(index - 12, index);
+      const after = differences.slice(index, index + 7);
+      if (before.filter((value) => value >= 45).length < 8) continue;
+      if (after.filter((value) => value <= 38).length < 6) continue;
+      return Math.round((index + 1) * step);
+    }
+    return 0;
+  }
+
+  async function analyzeVideo(video, duration, targetSeconds, skipIntro = 0) {
     const clipCount = Math.max(3, Math.ceil(targetSeconds / HIGHLIGHT_SECONDS));
     const sampleCount = Math.min(
       180,
       Math.max(42, clipCount * 5, Math.ceil(duration / 45))
     );
     const halfClip = HIGHLIGHT_SECONDS / 2;
-    const firstTime = Math.min(halfClip, Math.max(0, duration / 4));
+    const firstTime = Math.min(skipIntro + halfClip, Math.max(0, duration / 4));
     const lastTime = Math.max(firstTime, duration - halfClip - 0.6);
     const pairOffset = Math.min(0.45, Math.max(0.18, duration / sampleCount / 8));
     const width = 176;
@@ -627,9 +682,10 @@
     return sorted[lower] * (1 - weight) + sorted[upper] * weight;
   }
 
-  function selectSegments(candidates, targetSeconds, sourceDuration) {
-    if (sourceDuration <= targetSeconds * 1.12) {
-      return [{ start: 0, length: targetSeconds, focusX: 0.5, score: 1 }];
+  function selectSegments(candidates, targetSeconds, sourceDuration, skipIntro = 0) {
+    const sourceStart = clamp(skipIntro, 0, Math.max(0, sourceDuration - targetSeconds));
+    if (sourceDuration - sourceStart <= targetSeconds * 1.12) {
+      return [{ start: sourceStart, length: targetSeconds, focusX: 0.5, score: 1 }];
     }
 
     const clipLength = HIGHLIGHT_SECONDS;
@@ -637,20 +693,27 @@
     const segmentLengths = distributeDuration(targetSeconds, clipCount);
     const pool = candidates.map((candidate) => ({
       ...candidate,
-      start: clamp(candidate.time - clipLength / 2, 0, sourceDuration - clipLength)
+      start: clamp(candidate.time - clipLength / 2, sourceStart, sourceDuration - clipLength)
     }));
     const selected = [];
 
     for (let zoneIndex = 0; zoneIndex < clipCount; zoneIndex += 1) {
-      const zoneStart = (sourceDuration * zoneIndex) / clipCount;
-      const zoneEnd = (sourceDuration * (zoneIndex + 1)) / clipCount;
+      const usableDuration = sourceDuration - sourceStart;
+      const zoneStart = sourceStart + (usableDuration * zoneIndex) / clipCount;
+      const zoneEnd = sourceStart + (usableDuration * (zoneIndex + 1)) / clipCount;
       const zoneCenter = (zoneStart + zoneEnd) / 2;
       const zoneWidth = Math.max(1, zoneEnd - zoneStart);
-      const ranked = pool
-        .filter((candidate) => candidate.time >= zoneStart && candidate.time < zoneEnd)
+      const inZone = pool.filter((candidate) => candidate.time >= zoneStart && candidate.time < zoneEnd);
+      const firstStageEnd = sourceStart + Math.min(90, Math.max(48, usableDuration * 0.02));
+      const earlyStage = zoneIndex === 0 && sourceStart > 0
+        ? inZone.filter((candidate) => candidate.time <= firstStageEnd)
+        : [];
+      const ranked = (earlyStage.length ? earlyStage : inZone)
         .map((candidate) => ({
           candidate,
-          adjustedScore: candidate.score + (1 - Math.abs(candidate.time - zoneCenter) / zoneWidth) * 0.08
+          adjustedScore: candidate.score +
+            (1 - Math.abs(candidate.time - zoneCenter) / zoneWidth) * 0.08 +
+            (zoneIndex === clipCount - 1 ? (candidate.time - zoneStart) / zoneWidth * 0.12 : 0)
         }))
         .sort((a, b) => b.adjustedScore - a.adjustedScore);
 
@@ -666,10 +729,10 @@
 
     while (selected.length < clipCount) {
       const index = selected.length;
-      const midpoint = (sourceDuration * (index + 0.5)) / clipCount;
+      const midpoint = sourceStart + ((sourceDuration - sourceStart) * (index + 0.5)) / clipCount;
       selected.push({
         time: midpoint,
-        start: clamp(midpoint - clipLength / 2, 0, sourceDuration - clipLength),
+        start: clamp(midpoint - clipLength / 2, sourceStart, sourceDuration - clipLength),
         focusX: 0.5,
         score: 0
       });
@@ -679,16 +742,16 @@
       .slice(0, clipCount)
       .sort((a, b) => a.time - b.time)
       .map((candidate, index) => ({
-        start: clamp(candidate.time - segmentLengths[index] / 2, 0, sourceDuration - segmentLengths[index]),
+        start: clamp(candidate.time - segmentLengths[index] / 2, sourceStart, sourceDuration - segmentLengths[index]),
         length: segmentLengths[index],
         focusX: candidate.focusX,
         score: candidate.score
       }));
-    return placeSegmentsInSourceOrder(ordered, sourceDuration);
+    return placeSegmentsInSourceOrder(ordered, sourceDuration, sourceStart);
   }
 
-  function placeSegmentsInSourceOrder(segments, sourceDuration) {
-    let previousEnd = 0;
+  function placeSegmentsInSourceOrder(segments, sourceDuration, sourceStart = 0) {
+    let previousEnd = sourceStart;
     return segments.map((segment, index) => {
       const remaining = segments.slice(index + 1).reduce((sum, item) => sum + item.length + 0.1, 0);
       const minimum = previousEnd + (index ? 0.1 : 0);
@@ -713,7 +776,7 @@
     });
   }
 
-  async function refineSegmentSafety(video, segments, sourceDuration) {
+  async function refineSegmentSafety(video, segments, sourceDuration, sourceStart = 0) {
     const width = 96;
     const height = clamp(Math.round(width * (video.videoHeight / video.videoWidth)), 54, 108);
     const canvas = document.createElement("canvas");
@@ -732,7 +795,7 @@
         const start = segment.start + shift;
         const previousEnd = refined.length ? refined[refined.length - 1].start + refined[refined.length - 1].length : 0;
         const nextStart = segments[index + 1]?.start ?? sourceDuration;
-        if (start < previousEnd + (index ? 0.08 : 0) || start + segment.length > nextStart - (index + 1 < segments.length ? 0.08 : 0)) continue;
+        if (start < Math.max(sourceStart, previousEnd + (index ? 0.08 : 0)) || start + segment.length > nextStart - (index + 1 < segments.length ? 0.08 : 0)) continue;
         const candidate = { ...segment, start };
         if (overlapsEarlierSegment(candidate, refined)) continue;
 
@@ -1128,7 +1191,7 @@
         const index = y * width + x;
         const edge = Math.abs(gray[index] - gray[index - 1]) + Math.abs(gray[index] - gray[index - width]);
         const motion = tracker.previous ? Math.min(48, Math.abs(gray[index] - tracker.previous[index])) : 0;
-        const centerPrior = 0.45 + 0.55 * Math.exp(-Math.pow((x / width - 0.5) / 0.34, 2));
+        const centerPrior = 0.25 + 0.75 * Math.exp(-Math.pow((x / width - 0.5) / 0.3, 2));
         const verticalPosition = y / height;
         const verticalWeight = 0.8 + 0.2 * Math.exp(-Math.pow((verticalPosition - 0.5) / 0.4, 2));
         const salience = (edge * 0.42 + motion * 0.75) * centerPrior * verticalWeight;
@@ -1142,10 +1205,11 @@
       const rawDetected = weightedX / total / width;
       const detected = clamp(rawDetected, 0.14, 0.86);
       tracker.visualFocus = detected;
-      let target = detected * 0.7 + tracker.initialFocus * 0.3;
+      const stableCenter = tracker.initialFocus * 0.3 + 0.5 * 0.7;
+      let target = clamp(detected * 0.3 + stableCenter * 0.7, 0.35, 0.65);
 
       if (tracker.faceFocus !== null && performance.now() - tracker.faceSeenAt < 1300) {
-        target = tracker.faceFocus * 0.45 + detected * 0.55;
+        target = tracker.faceFocus * 0.7 + detected * 0.2 + stableCenter * 0.1;
       }
 
       tracker.target = clamp(target, 0.13, 0.87);
@@ -1198,7 +1262,7 @@
     ui.resultVideo.src = state.resultUrl;
     ui.downloadBtn.href = state.resultUrl;
     ui.downloadBtn.download = result.fileName;
-    ui.resultMeta.textContent = `${state.outputMinutes}-minute vertical video • ${segments.length} ordered moments • ${formatBytes(result.blob.size)} • ${result.mimeType.includes("mp4") ? "MP4" : "WebM"}`;
+    ui.resultMeta.textContent = `${state.outputMinutes}-minute vertical video • ${segments.length} ordered moments${state.skippedPreview ? ` • fast-cut preview skipped (${formatDuration(state.skippedPreview)})` : ""} • ${formatBytes(result.blob.size)} • ${result.mimeType.includes("mp4") ? "MP4" : "WebM"}`;
     ui.sourceTimeline.replaceChildren(...segments.map((segment) => {
       const row = document.createElement("li");
       row.textContent = `${formatDuration(segment.start)} to ${formatDuration(segment.start + segment.length)} in the original video`;
@@ -1251,6 +1315,7 @@
       button.disabled = locked;
     });
     ui.framingMode.disabled = locked;
+    ui.avoidPreview.disabled = locked;
     if (locked) ui.createBtn.disabled = true;
   }
 
