@@ -569,6 +569,26 @@ h2 {
 .preview-option small { color: var(--muted); line-height: 1.42; }
 .preview-option:focus-within { outline: 2px solid var(--accent-light); outline-offset: 2px; }
 
+.start-control {
+  display: grid;
+  gap: 9px;
+  margin-top: 18px;
+}
+
+.start-control label { font-weight: 700; }
+.start-control input {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 14px;
+  border: 1px solid var(--stroke-strong);
+  border-radius: 10px;
+  color: var(--text);
+  background: #1c2130;
+  font: inherit;
+}
+.start-control input:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+.start-control p { margin: 0; color: var(--muted); font-size: 0.83rem; line-height: 1.4; }
+
 .output-plan {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

@@ -13,6 +13,11 @@ The default **Skip fast-cut opening previews** option looks for an unusually
 rapid opening montage followed by sustained footage. If detected, the short
 begins with the main video after that montage. Turn the option off when the
 fast opening is important, such as a sports highlight compilation.
+If the automatic detection misses an opening, enter **Start after opening**
+as `minutes:seconds` (for example `1:18`). This manual start time takes priority
+over the automatic checkbox, and the finished result displays the source
+timestamps so you can confirm where each chapter came from. The field clears
+when you choose a different original video.
 
 The default framing stays closer to the center of the original scene when
 automatic face detection is unavailable. Choose **Show the entire original frame** when people, text,

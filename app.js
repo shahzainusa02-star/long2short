@@ -20,6 +20,7 @@
     durationButtons: [...document.querySelectorAll(".duration-button")],
     framingMode: document.getElementById("framingMode"),
     avoidPreview: document.getElementById("avoidPreview"),
+    openingStart: document.getElementById("openingStart"),
     createBtn: document.getElementById("createBtn"),
     createBtnLabel: document.querySelector("#createBtn span"),
     formatNote: document.getElementById("formatNote"),
@@ -54,6 +55,7 @@
     framingMode: "balanced",
     avoidPreview: true,
     skippedPreview: 0,
+    skipMethod: null,
     running: false,
     cancelled: false,
     activeVideo: null,
@@ -203,6 +205,7 @@
     state.file = file;
     state.sourceUrl = URL.createObjectURL(file);
     state.sourceDuration = 0;
+    ui.openingStart.value = "";
 
     ui.sourcePreview.removeAttribute("src");
     ui.sourcePreview.load();
@@ -311,6 +314,16 @@
       return;
     }
 
+    const manualStart = parseSourceStart(ui.openingStart.value);
+    if (Number.isNaN(manualStart)) {
+      showError("Check the start time", "Use minutes:seconds, such as 1:18, or leave this field empty for automatic selection.");
+      return;
+    }
+    if (manualStart !== null && manualStart > state.sourceDuration - targetSeconds - 0.5) {
+      showError("Start time is too late", "Choose a time that leaves enough of the original video for this short.");
+      return;
+    }
+
     hideError();
     clearPreviousResult();
     state.running = true;
@@ -336,9 +349,12 @@
       await Promise.all([pipeline.ready, requestWakeLock()]);
       throwIfCancelled();
 
-      state.skippedPreview = state.avoidPreview
-        ? await detectIntroPreview(pipeline.video, state.sourceDuration, targetSeconds)
-        : 0;
+      state.skippedPreview = manualStart !== null
+        ? manualStart
+        : state.avoidPreview
+          ? await detectIntroPreview(pipeline.video, state.sourceDuration, targetSeconds)
+          : 0;
+      state.skipMethod = manualStart !== null ? "manual" : state.skippedPreview ? "automatic" : null;
       const candidates = await analyzeVideo(pipeline.video, state.sourceDuration, targetSeconds, state.skippedPreview);
       throwIfCancelled();
 
@@ -501,6 +517,18 @@
       return Math.round((index + 1) * step);
     }
     return 0;
+  }
+
+  function parseSourceStart(raw) {
+    const value = String(raw).trim();
+    if (!value) return null;
+    const pieces = value.split(":");
+    if (pieces.length < 2 || pieces.length > 3 || pieces.some((part) => !/^\d+$/.test(part))) return NaN;
+    const numbers = pieces.map(Number);
+    if (numbers.at(-1) >= 60 || (numbers.length === 3 && numbers[1] >= 60)) return NaN;
+    return numbers.length === 2
+      ? numbers[0] * 60 + numbers[1]
+      : numbers[0] * 3600 + numbers[1] * 60 + numbers[2];
   }
 
   async function analyzeVideo(video, duration, targetSeconds, skipIntro = 0) {
@@ -704,11 +732,17 @@
       const zoneCenter = (zoneStart + zoneEnd) / 2;
       const zoneWidth = Math.max(1, zoneEnd - zoneStart);
       const inZone = pool.filter((candidate) => candidate.time >= zoneStart && candidate.time < zoneEnd);
-      const firstStageEnd = sourceStart + Math.min(90, Math.max(48, usableDuration * 0.02));
-      const earlyStage = zoneIndex === 0 && sourceStart > 0
-        ? inZone.filter((candidate) => candidate.time <= firstStageEnd)
-        : [];
-      const ranked = (earlyStage.length ? earlyStage : inZone)
+      if (zoneIndex === 0 && sourceStart > 0) {
+        const expectedCenter = sourceStart + segmentLengths[0] / 2;
+        const nearest = inZone.slice().sort((a, b) => Math.abs(a.time - expectedCenter) - Math.abs(b.time - expectedCenter))[0];
+        selected.push({
+          ...(nearest || { focusX: 0.5, score: 0 }),
+          time: expectedCenter,
+          start: sourceStart
+        });
+        continue;
+      }
+      const ranked = inZone
         .map((candidate) => ({
           candidate,
           adjustedScore: candidate.score +
@@ -791,7 +825,7 @@
       const segment = segments[index];
       let best = null;
 
-      for (const shift of shifts) {
+      for (const shift of index === 0 && sourceStart > 0 ? [0] : shifts) {
         const start = segment.start + shift;
         const previousEnd = refined.length ? refined[refined.length - 1].start + refined[refined.length - 1].length : 0;
         const nextStart = segments[index + 1]?.start ?? sourceDuration;
@@ -1262,7 +1296,10 @@
     ui.resultVideo.src = state.resultUrl;
     ui.downloadBtn.href = state.resultUrl;
     ui.downloadBtn.download = result.fileName;
-    ui.resultMeta.textContent = `${state.outputMinutes}-minute vertical video • ${segments.length} ordered moments${state.skippedPreview ? ` • fast-cut preview skipped (${formatDuration(state.skippedPreview)})` : ""} • ${formatBytes(result.blob.size)} • ${result.mimeType.includes("mp4") ? "MP4" : "WebM"}`;
+    const skippedOpening = state.skippedPreview
+      ? ` • ${state.skipMethod === "manual" ? "start time chosen" : "fast-cut preview skipped"} (${formatDuration(state.skippedPreview)})`
+      : "";
+    ui.resultMeta.textContent = `${state.outputMinutes}-minute vertical video • ${segments.length} ordered moments${skippedOpening} • ${formatBytes(result.blob.size)} • ${result.mimeType.includes("mp4") ? "MP4" : "WebM"}`;
     ui.sourceTimeline.replaceChildren(...segments.map((segment) => {
       const row = document.createElement("li");
       row.textContent = `${formatDuration(segment.start)} to ${formatDuration(segment.start + segment.length)} in the original video`;
@@ -1316,6 +1353,7 @@
     });
     ui.framingMode.disabled = locked;
     ui.avoidPreview.disabled = locked;
+    ui.openingStart.disabled = locked;
     if (locked) ui.createBtn.disabled = true;
   }
 
