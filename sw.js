@@ -1,4 +1,4 @@
-const CACHE_NAME = "long2short-github-v9";
+const CACHE_NAME = "long2short-github-v10";
 const CORE_ASSETS = [
   "./",
   "./index.html",

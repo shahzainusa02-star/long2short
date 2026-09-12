@@ -851,9 +851,12 @@
       const ratio = index === bodyCount - 1 ? 0.985 : index / (bodyCount - 1) * 0.965;
       const expectedStart = sourceStart + usableDuration * ratio;
       const anchor = clamp(expectedStart, earliest, Math.max(earliest, latest));
-      const radius = Math.max(clipLength * 2, usableDuration / bodyCount * (index === bodyCount - 1 ? 1.2 : 0.75));
+      // Keep each beat near its own slice of the source. A wide search could
+      // jump over a short but essential stage when its picture was less bright
+      // than the adjacent stages (washing, setup, a slide change, etc.).
+      const radius = Math.max(clipLength * 2, usableDuration / bodyCount * 0.55);
       const valid = pool.filter((item) => item.start >= earliest && item.start <= latest);
-      const near = valid.filter((item) => Math.abs(item.start - anchor) <= radius * 1.55);
+      const near = valid.filter((item) => Math.abs(item.start - anchor) <= radius);
       const choice = (near.length ? near : valid)
         .map((item) => ({ item, rank: rankCandidate(item, anchor, radius, selected) }))
         .sort((a, b) => b.rank - a.rank)[0]?.item;
@@ -868,31 +871,61 @@
     }
 
     const body = placeSegmentsInSourceOrder(selected, bodyEnd, sourceStart);
-    const closing = hasClosing ? selectClosingSegments(closingStart, sourceDuration, closingSeconds, closingCount) : [];
+    const closing = hasClosing
+      ? selectClosingSegments(closingStart, sourceDuration, closingSeconds, closingCount, candidates, body.at(-1))
+      : [];
     return [...opening, ...body, ...closing];
   }
 
   function rankCandidate(candidate, anchor, radius, selected) {
-    const recentSignatures = selected.slice(-3).map((item) => item.signature).filter(Boolean);
+    const recentSignatures = selected.slice(-6).map((item) => item.signature).filter(Boolean);
     const distinctness = recentSignatures.length
       ? Math.min(...recentSignatures.map((previous) => signatureDistance(candidate.signature, previous)))
       : 0.5;
-    const closeness = clamp(1 - Math.abs(candidate.start - anchor) / (radius * 1.55), 0, 1);
-    return candidate.score * 0.56 + closeness * 0.28 + distinctness * 0.16;
+    const closeness = clamp(1 - Math.abs(candidate.start - anchor) / Math.max(0.01, radius), 0, 1);
+    return candidate.score * 0.5 + closeness * 0.25 + distinctness * 0.25;
   }
 
-  function selectClosingSegments(start, end, seconds, count) {
+  function selectClosingSegments(start, end, seconds, count, candidates = [], previous = null) {
     const finalHold = Math.min(seconds - (count - 1) * 0.75, Math.max(3, seconds * 0.25));
     const lengths = [...distributeFastDuration(seconds - finalHold, count - 1), finalHold];
     const lastStart = end - finalHold - 0.35;
     const openingSpan = Math.max(0, lastStart - start - lengths.slice(0, -1).reduce((sum, value) => sum + value, 0));
     let earliest = start;
+    const selected = previous ? [previous] : [];
     return lengths.map((length, index) => {
       const isLast = index === count - 1;
       const position = isLast ? lastStart : start + openingSpan * index / (count - 1);
-      const segmentStart = clamp(position, earliest, end - length);
-      earliest = segmentStart + length;
-      return { start: segmentStart, length, focusX: 0.5, score: 1, isClosing: true };
+      const radius = Math.max(9, (end - start) / count * 0.6);
+      const latest = isLast ? end - length
+        : Math.min(lastStart - lengths.slice(index + 1, -1).reduce((sum, value) => sum + value + 0.1, 0),
+          start + openingSpan * (index + 1) / (count - 1) - length - 0.08);
+      const nearby = candidates.filter((item) => {
+        const segmentStart = item.time - length / 2;
+        return item.time >= start && item.time < end && segmentStart >= earliest && segmentStart <= latest &&
+          Math.abs(segmentStart - position) <= (isLast ? 20 : radius);
+      });
+      // Prefer a clear, visually different outcome from the last few moments;
+      // avoid holding on a blank outro just because it is the final frame.
+      // If the scan missed the final seconds entirely, keep the actual ending
+      // instead of mistakenly ending early on an old sample.
+      const finalSamples = isLast
+        ? nearby.filter((item) => item.time - length / 2 >= lastStart - 6)
+        : [];
+      const viableFinal = finalSamples.filter((item) => item.score >= 0.23);
+      let choices = nearby;
+      if (isLast && viableFinal.length) choices = viableFinal;
+      if (isLast && !finalSamples.length) choices = [];
+      const choice = choices.map((item) => ({
+        item,
+        rank: rankCandidate({ ...item, start: item.time - length / 2 }, position, isLast ? 20 : radius, selected)
+      })).sort((a, b) => b.rank - a.rank)[0]?.item;
+      const segmentStart = clamp(choice ? choice.time - length / 2 : position, earliest, Math.max(earliest, latest));
+      earliest = segmentStart + length + (isLast ? 0 : 0.1);
+      const segment = { start: segmentStart, length, focusX: choice?.focusX ?? 0.5,
+        score: choice?.score ?? 0, signature: choice?.signature, isClosing: true };
+      selected.push(segment);
+      return segment;
     });
   }
 

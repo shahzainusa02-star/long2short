@@ -14,8 +14,10 @@ the source video's ending, including a longer final shot. When the source
 has no edited opening, it samples across the entire timeline.
 
 This version checks that sampled frames have been decoded before ranking them,
-prefers visible activity or detail over empty shots, and avoids repeatedly
-using almost identical views when other nearby choices exist. This is based
+prefers visible activity or detail over empty shots, searches in narrower
+source-time windows to cover shorter stages, and favors different-looking
+closing shots. It keeps the actual ending if no suitable final frames were
+scanned, rather than assuming an earlier frame must be the reveal. This is based
 on pictures and motion only; it works for all subjects, but does not know
 the story, identify people reliably on all browsers, or guarantee human edits.
 The recorder corrects for small capture gaps as it works. Output lengths may
