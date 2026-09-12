@@ -5,7 +5,8 @@
   const OUTPUT_HEIGHT = 1280;
   const TARGET_ASPECT = OUTPUT_WIDTH / OUTPUT_HEIGHT;
   const RENDER_FPS = 30;
-  // Hold each moment long enough to show a visible step of the process.
+  // About 54 short beats in the first minute; longer previews stretch the
+  // beats slightly so 5-minute exports remain feasible on phones and laptops.
 
   const ui = {
     body: document.body,
@@ -595,9 +596,7 @@
     const halfClip = targetSeconds / clipCount / 2;
     const firstTime = clamp(skipIntro + halfClip, 0, Math.max(0, duration - halfClip - 0.6));
     const lastTime = Math.max(firstTime, duration - halfClip - 0.6);
-    // Slower actions (washing, assembling, demonstrations) need more than a
-    // split-second sample to register as activity.
-    const pairOffset = Math.min(0.8, Math.max(0.3, duration / sampleCount / 8));
+    const pairOffset = Math.min(0.45, Math.max(0.18, duration / sampleCount / 8));
     const width = 176;
     const height = clamp(Math.round(width * (video.videoHeight / video.videoWidth)), 96, 198);
     const analysisCanvas = document.createElement("canvas");
@@ -773,12 +772,12 @@
     candidates.forEach((candidate, index) => {
       const centerSafety = 1 - Math.abs(candidate.focusX - 0.5) * 0.42;
       candidate.score =
-        motion[index] * 0.27 +
-        sharpness[index] * 0.15 +
+        motion[index] * 0.21 +
+        sharpness[index] * 0.18 +
         exposure[index] * 0.16 +
-        composition[index] * 0.14 +
-        subjectDetail[index] * 0.19 +
-        centerSafety * 0.09 -
+        composition[index] * 0.17 +
+        subjectDetail[index] * 0.21 +
+        centerSafety * 0.07 -
         camera[index] * 0.18;
       // A bright but almost empty or unchanging room should not beat a
       // nearby shot of the actual action just because it is well exposed.
@@ -931,8 +930,7 @@
   }
 
   function previewChapterCount(targetSeconds) {
-    // Fewer, longer source-order moments let process and tutorial steps show.
-    return Math.max(22, Math.round(22 + (targetSeconds / 60 - 1) * 8));
+    return Math.max(54, Math.round(54 + (targetSeconds / 60 - 1) * 12));
   }
 
   function selectOpeningTeaser(length, teaserEnd) {
@@ -1338,9 +1336,6 @@
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    const backdrop = document.createElement("canvas");
-    backdrop.width = 56;
-    backdrop.height = 100;
     return {
       initialFocus: clamp(initialFocus || 0.5, 0.19, 0.81),
       focus: clamp(initialFocus || 0.5, 0.19, 0.81),
@@ -1353,8 +1348,6 @@
       hasGoodFrame: false,
       canvas,
       context: canvas.getContext("2d", { willReadFrequently: true }),
-      backdrop,
-      backdropContext: backdrop.getContext("2d"),
       previous: null,
       frame: 0
     };
@@ -1382,18 +1375,8 @@
     let cropHeight = sourceHeight;
 
     if (sourceAspect > TARGET_ASPECT) {
-      // Retain more of the action on both sides, and the full frame height.
-      // A tightly filled 9:16 crop often cuts off a hand, tool or client.
-      cropWidth = Math.min(sourceWidth, sourceHeight * OUTPUT_WIDTH / (OUTPUT_HEIGHT * 0.84));
+      cropWidth = sourceHeight * TARGET_ASPECT;
       sourceX = clamp(tracker.focus * sourceWidth - cropWidth / 2, 0, sourceWidth - cropWidth);
-      const displayHeight = Math.min(OUTPUT_HEIGHT, OUTPUT_WIDTH * sourceHeight / cropWidth);
-      if (displayHeight < OUTPUT_HEIGHT - 1) {
-        drawContextBackdrop(video, context, tracker, sourceX, cropWidth, sourceHeight, forceTrack);
-        context.drawImage(video, sourceX, 0, cropWidth, sourceHeight,
-          0, (OUTPUT_HEIGHT - displayHeight) / 2, OUTPUT_WIDTH, displayHeight);
-        tracker.hasGoodFrame = true;
-        return;
-      }
     } else if (sourceAspect < TARGET_ASPECT) {
       cropHeight = sourceWidth / TARGET_ASPECT;
       sourceY = Math.max(0, (sourceHeight - cropHeight) / 2);
@@ -1413,18 +1396,6 @@
       OUTPUT_HEIGHT
     );
     tracker.hasGoodFrame = true;
-  }
-
-  function drawContextBackdrop(video, context, tracker, sourceX, cropWidth, sourceHeight, forceTrack) {
-    // A tiny cached background fills the narrow bands without processing a
-    // second full-resolution video frame on every draw (important on phones).
-    if (forceTrack || tracker.frame % 12 === 0) {
-      tracker.backdropContext.drawImage(video, sourceX, 0, cropWidth, sourceHeight,
-        0, 0, tracker.backdrop.width, tracker.backdrop.height);
-    }
-    context.drawImage(tracker.backdrop, 0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
-    context.fillStyle = "rgba(8, 11, 16, 0.42)";
-    context.fillRect(0, 0, OUTPUT_WIDTH, OUTPUT_HEIGHT);
   }
 
   function drawContainedFrame(video, context, sourceWidth, sourceHeight) {
@@ -1495,9 +1466,7 @@
       let target = clamp(detected * 0.3 + stableCenter * 0.7, 0.35, 0.65);
 
       if (tracker.faceFocus !== null && performance.now() - tracker.faceSeenAt < 1300) {
-        // Faces give context, but hands, objects and the action itself should
-        // drive framing; otherwise the frame follows the presenter alone.
-        target = tracker.faceFocus * 0.2 + detected * 0.55 + stableCenter * 0.25;
+        target = tracker.faceFocus * 0.7 + detected * 0.2 + stableCenter * 0.1;
       }
 
       tracker.target = clamp(target, 0.13, 0.87);
