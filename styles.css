@@ -575,6 +575,10 @@ h2 {
   margin-top: 18px;
 }
 
+.start-control:not([open]) { display: block; }
+.start-control summary { color: var(--muted); cursor: pointer; font-weight: 700; }
+.start-control summary:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 3px; }
+.start-control[open] summary { margin-bottom: 7px; }
 .start-control label { font-weight: 700; }
 .start-control input {
   width: 100%;

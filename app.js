@@ -5,7 +5,7 @@
   const OUTPUT_HEIGHT = 1280;
   const TARGET_ASPECT = OUTPUT_WIDTH / OUTPUT_HEIGHT;
   const RENDER_FPS = 30;
-  const HIGHLIGHT_SECONDS = 26;
+  const PREVIEW_CHAPTER_SECONDS = 22;
 
   const ui = {
     body: document.body,
@@ -248,7 +248,7 @@
     const hasFile = Boolean(state.file && state.sourceDuration);
     const longEnough = state.sourceDuration >= targetSeconds - 0.1;
 
-    ui.createBtnLabel.textContent = `Create ${state.outputMinutes}-minute short`;
+    ui.createBtnLabel.textContent = `Create ${state.outputMinutes}-minute preview`;
     ui.createBtn.disabled = state.running || !hasFile || !longEnough || !capabilities.supported;
 
     if (!capabilities.supported) {
@@ -267,7 +267,7 @@
       ui.sourceNote.textContent = `This video is ${formatDuration(state.sourceDuration)}. Choose a shorter output length.`;
       ui.sourceNote.style.color = "var(--warning)";
     } else {
-      ui.sourceNote.textContent = `Ready for ${state.outputMinutes} minute${state.outputMinutes === 1 ? "" : "s"} of ordered moments from the full timeline.`;
+      ui.sourceNote.textContent = `Ready to preview the beginning, middle, and ending in ${state.outputMinutes} minute${state.outputMinutes === 1 ? "" : "s"}.`;
       ui.sourceNote.style.color = "";
     }
   }
@@ -320,7 +320,7 @@
       return;
     }
     if (manualStart !== null && manualStart > state.sourceDuration - targetSeconds - 0.5) {
-      showError("Start time is too late", "Choose a time that leaves enough of the original video for this short.");
+      showError("Start time is too late", "Choose a time that leaves enough of the original video for the preview.");
       return;
     }
 
@@ -358,7 +358,7 @@
       const candidates = await analyzeVideo(pipeline.video, state.sourceDuration, targetSeconds, state.skippedPreview);
       throwIfCancelled();
 
-      setProgress(35, "Choosing the best moments", "Keeping longer moments in the original order…", "Selection almost ready");
+      setProgress(35, "Building a full-video preview", "Covering the opening, process, and ending in the original order…", "Selection almost ready");
       const selectedSegments = selectSegments(candidates, targetSeconds, state.sourceDuration, state.skippedPreview);
       const segments = await refineSegmentSafety(pipeline.video, selectedSegments, state.sourceDuration, state.skippedPreview);
       throwIfCancelled();
@@ -490,10 +490,13 @@
     for (let time = 0; time <= probeEnd; time += step) {
       throwIfCancelled();
       await seekVideo(video, time);
+      // Some browsers signal `seeked` before the paused frame has been painted.
+      // Waiting for a paint prevents identical, stale frames from hiding a montage.
+      await waitForPaint();
       const current = readGrayFrame(video, context, width, height);
       if (previous) differences.push(frameDifference(previous, current, width, height, 0, 0));
       previous = current;
-      if (differences.length === 12 && differences.filter((value) => value >= 45).length < 9) return 0;
+      if (differences.length === 12 && differences.filter((value) => value >= 42).length < 6) return 0;
       const previewEnd = locateIntroPreview(differences, step);
       if (previewEnd) return previewEnd;
       if (time % 18 === 0) await waitForPaint();
@@ -506,14 +509,17 @@
     // Only remove an opening with many quick cuts followed by sustained footage.
     // A busy opening that stays busy is content, not a detectable teaser.
     if (differences.length < 21) return 0;
-    const hasFastOpening = differences.slice(0, 12).filter((value) => value >= 45).length >= 9;
+    const hasFastOpening = differences.slice(0, 12).filter((value) => value >= 42).length >= 6;
     if (!hasFastOpening) return 0;
 
     for (let index = 14; index + 7 <= differences.length; index += 1) {
       const before = differences.slice(index - 12, index);
       const after = differences.slice(index, index + 7);
-      if (before.filter((value) => value >= 45).length < 8) continue;
+      if (before.filter((value) => value >= 42).length < 6) continue;
       if (after.filter((value) => value <= 38).length < 6) continue;
+      const beforeAverage = before.reduce((total, value) => total + value, 0) / before.length;
+      const afterAverage = after.reduce((total, value) => total + value, 0) / after.length;
+      if (beforeAverage < afterAverage * 1.55) continue;
       return Math.round((index + 1) * step);
     }
     return 0;
@@ -532,12 +538,12 @@
   }
 
   async function analyzeVideo(video, duration, targetSeconds, skipIntro = 0) {
-    const clipCount = Math.max(3, Math.ceil(targetSeconds / HIGHLIGHT_SECONDS));
+    const clipCount = previewChapterCount(targetSeconds);
     const sampleCount = Math.min(
       180,
       Math.max(42, clipCount * 5, Math.ceil(duration / 45))
     );
-    const halfClip = HIGHLIGHT_SECONDS / 2;
+    const halfClip = targetSeconds / clipCount / 2;
     const firstTime = Math.min(skipIntro + halfClip, Math.max(0, duration / 4));
     const lastTime = Math.max(firstTime, duration - halfClip - 0.6);
     const pairOffset = Math.min(0.45, Math.max(0.18, duration / sampleCount / 8));
@@ -716,72 +722,65 @@
       return [{ start: sourceStart, length: targetSeconds, focusX: 0.5, score: 1 }];
     }
 
-    const clipLength = HIGHLIGHT_SECONDS;
-    const clipCount = Math.max(3, Math.ceil(targetSeconds / clipLength));
+    const clipCount = previewChapterCount(targetSeconds);
     const segmentLengths = distributeDuration(targetSeconds, clipCount);
+    const usableDuration = sourceDuration - sourceStart;
+    const clipLength = targetSeconds / clipCount;
+    const sourceGap = Math.min(
+      usableDuration * 0.035,
+      Math.max(0, (usableDuration - targetSeconds) / (clipCount - 1) * 0.65)
+    );
     const pool = candidates.map((candidate) => ({
       ...candidate,
       start: clamp(candidate.time - clipLength / 2, sourceStart, sourceDuration - clipLength)
     }));
     const selected = [];
 
-    for (let zoneIndex = 0; zoneIndex < clipCount; zoneIndex += 1) {
-      const usableDuration = sourceDuration - sourceStart;
-      const zoneStart = sourceStart + (usableDuration * zoneIndex) / clipCount;
-      const zoneEnd = sourceStart + (usableDuration * (zoneIndex + 1)) / clipCount;
-      const zoneCenter = (zoneStart + zoneEnd) / 2;
-      const zoneWidth = Math.max(1, zoneEnd - zoneStart);
-      const inZone = pool.filter((candidate) => candidate.time >= zoneStart && candidate.time < zoneEnd);
-      if (zoneIndex === 0 && sourceStart > 0) {
-        const expectedCenter = sourceStart + segmentLengths[0] / 2;
-        const nearest = inZone.slice().sort((a, b) => Math.abs(a.time - expectedCenter) - Math.abs(b.time - expectedCenter))[0];
-        selected.push({
-          ...(nearest || { focusX: 0.5, score: 0 }),
-          time: expectedCenter,
-          start: sourceStart
-        });
-        continue;
-      }
-      const ranked = inZone
+    // A preview must tell the story across the whole source. Scoring alone used
+    // to pick a high-scoring haircut several minutes in, omitting the wash.
+    // Pin the beginning. If an opening montage was not detected, also keep an
+    // early chapter so the actual first process can still appear in the result.
+    for (let index = 0; index < clipCount; index += 1) {
+      const ratio = index === 0 ? 0
+        : index === 1 ? (sourceStart > 0 ? 0.16 : 0.025)
+          : index === clipCount - 1 ? 0.975
+          : (sourceStart > 0 ? 0.34 : 0.17) +
+            (index - 2) / Math.max(1, clipCount - 4) * (sourceStart > 0 ? 0.45 : 0.585);
+      const requestedStart = index === 0 ? sourceStart
+        : sourceStart + usableDuration * ratio;
+      const earliest = selected.length
+        ? selected.at(-1).start + selected.at(-1).length + (index === 1 ? 0.1 : sourceGap)
+        : sourceStart;
+      const remainingLengths = segmentLengths.slice(index).reduce((total, length) => total + length, 0);
+      const latest = sourceDuration - remainingLengths - (clipCount - index - 1) * sourceGap;
+      const anchorStart = clamp(requestedStart, earliest, Math.max(earliest, latest));
+      const halfLength = segmentLengths[index] / 2;
+      const radius = Math.max(clipLength * 1.5, usableDuration * (index === clipCount - 1 ? 0.022 : 0.07));
+      const validPool = pool.filter((candidate) => candidate.start >= earliest && candidate.start <= latest);
+      const nearby = validPool.filter((candidate) => Math.abs(candidate.start - anchorStart) <= radius);
+      const choice = (nearby.length ? nearby : validPool)
         .map((candidate) => ({
           candidate,
-          adjustedScore: candidate.score +
-            (1 - Math.abs(candidate.time - zoneCenter) / zoneWidth) * 0.08 +
-            (zoneIndex === clipCount - 1 ? (candidate.time - zoneStart) / zoneWidth * 0.12 : 0)
+          value: candidate.score * 0.53 +
+            clamp(1 - Math.abs(candidate.start - anchorStart) / radius, 0, 1) * 0.47
         }))
-        .sort((a, b) => b.adjustedScore - a.adjustedScore);
-
-      const choice = ranked.find(({ candidate }) => isFarEnough(candidate, selected, clipLength))?.candidate;
-      if (choice) selected.push(choice);
-    }
-
-    const globalRanked = [...pool].sort((a, b) => b.score - a.score);
-    for (const candidate of globalRanked) {
-      if (selected.length >= clipCount) break;
-      if (isFarEnough(candidate, selected, clipLength)) selected.push(candidate);
-    }
-
-    while (selected.length < clipCount) {
-      const index = selected.length;
-      const midpoint = sourceStart + ((sourceDuration - sourceStart) * (index + 0.5)) / clipCount;
+        .sort((a, b) => b.value - a.value)[0]?.candidate;
+      const pinned = index < 2;
+      const start = pinned ? anchorStart
+        : clamp(choice ? choice.time - halfLength : anchorStart, earliest, Math.max(earliest, latest));
       selected.push({
-        time: midpoint,
-        start: clamp(midpoint - clipLength / 2, sourceStart, sourceDuration - clipLength),
-        focusX: 0.5,
-        score: 0
+        start,
+        length: segmentLengths[index],
+        focusX: choice?.focusX ?? 0.5,
+        score: choice?.score ?? 0
       });
     }
 
-    const ordered = selected
-      .slice(0, clipCount)
-      .sort((a, b) => a.time - b.time)
-      .map((candidate, index) => ({
-        start: clamp(candidate.time - segmentLengths[index] / 2, sourceStart, sourceDuration - segmentLengths[index]),
-        length: segmentLengths[index],
-        focusX: candidate.focusX,
-        score: candidate.score
-      }));
-    return placeSegmentsInSourceOrder(ordered, sourceDuration, sourceStart);
+    return placeSegmentsInSourceOrder(selected, sourceDuration, sourceStart);
+  }
+
+  function previewChapterCount(targetSeconds) {
+    return Math.max(5, Math.ceil(targetSeconds / PREVIEW_CHAPTER_SECONDS) + 1);
   }
 
   function placeSegmentsInSourceOrder(segments, sourceDuration, sourceStart = 0) {
@@ -794,10 +793,6 @@
       previousEnd = start + segment.length;
       return { ...segment, start };
     });
-  }
-
-  function isFarEnough(candidate, selected, clipLength) {
-    return selected.every((item) => Math.abs(item.start - candidate.start) >= clipLength * 1.08);
   }
 
   function distributeDuration(totalSeconds, count) {
@@ -825,7 +820,7 @@
       const segment = segments[index];
       let best = null;
 
-      for (const shift of index === 0 && sourceStart > 0 ? [0] : shifts) {
+      for (const shift of index < 2 ? [0] : shifts) {
         const start = segment.start + shift;
         const previousEnd = refined.length ? refined[refined.length - 1].start + refined[refined.length - 1].length : 0;
         const nextStart = segments[index + 1]?.start ?? sourceDuration;
@@ -904,7 +899,7 @@
     canvas.width = OUTPUT_WIDTH;
     canvas.height = OUTPUT_HEIGHT;
 
-    setProgress(41, "Building your vertical short", `Preparing ${segments.length} selected moments…`, "Original audio included");
+    setProgress(41, "Building your preview", `Preparing ${segments.length} selected moments…`, "Original audio included");
 
     await seekVideo(firstVideo, segments[0].start);
     setActiveAudioSlot(gainNodes, 0, audioContext);
@@ -956,7 +951,7 @@
           const percent = 41 + (totalRendered / targetSeconds) * 57;
           setProgress(
             percent,
-            "Building your vertical short",
+            "Building your preview",
             `Rendering highlight ${index + 1} of ${segments.length}…`,
             `${formatDuration(totalRendered)} / ${formatDuration(targetSeconds)}`,
             true
@@ -996,7 +991,7 @@
     const extension = mimeType.includes("mp4") ? "mp4" : "webm";
     const sourceBase = (state.file.name || "video").replace(/\.[^.]+$/, "");
     const safeBase = sourceBase.replace(/[^a-z0-9-_]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 90) || "video";
-    const fileName = `${safeBase}-short-${state.outputMinutes}m.${extension}`;
+    const fileName = `${safeBase}-preview-${state.outputMinutes}m.${extension}`;
 
     return { blob, mimeType, fileName };
   }
@@ -1299,7 +1294,7 @@
     const skippedOpening = state.skippedPreview
       ? ` • ${state.skipMethod === "manual" ? "start time chosen" : "fast-cut preview skipped"} (${formatDuration(state.skippedPreview)})`
       : "";
-    ui.resultMeta.textContent = `${state.outputMinutes}-minute vertical video • ${segments.length} ordered moments${skippedOpening} • ${formatBytes(result.blob.size)} • ${result.mimeType.includes("mp4") ? "MP4" : "WebM"}`;
+    ui.resultMeta.textContent = `${state.outputMinutes}-minute preview of the full video • ${segments.length} ordered moments${skippedOpening} • ${formatBytes(result.blob.size)} • ${result.mimeType.includes("mp4") ? "MP4" : "WebM"}`;
     ui.sourceTimeline.replaceChildren(...segments.map((segment) => {
       const row = document.createElement("li");
       row.textContent = `${formatDuration(segment.start)} to ${formatDuration(segment.start + segment.length)} in the original video`;

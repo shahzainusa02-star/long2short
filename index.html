@@ -7,7 +7,7 @@
     <meta name="color-scheme" content="dark" />
     <meta
       name="description"
-      content="Turn long videos into 1–5 minute vertical highlight videos directly in your browser."
+      content="Make a 1–5 minute preview of a long video, from opening through ending, directly in your browser."
     />
     <title>Long2Short — Private video highlighter</title>
     <link rel="manifest" href="./manifest.webmanifest" />
@@ -16,8 +16,8 @@
       type="image/svg+xml"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23090b12'/%3E%3Cpath d='M18 14h15c10 0 17 7 17 18s-7 18-17 18H18z' fill='%237c5cff'/%3E%3Cpath d='M28 23l15 9-15 9z' fill='white'/%3E%3C/svg%3E"
     />
-    <link rel="stylesheet" href="./styles.css?v=5" />
-    <script src="./app.js?v=5" defer></script>
+    <link rel="stylesheet" href="./styles.css?v=6" />
+    <script src="./app.js?v=6" defer></script>
   </head>
   <body>
     <header class="topbar">
@@ -37,10 +37,11 @@
       <section class="intro" aria-labelledby="pageTitle">
         <div>
           <p class="eyebrow">PRIVATE VIDEO STUDIO</p>
-          <h1 id="pageTitle">Find the strongest moments.<br />Make one clean short.</h1>
+          <h1 id="pageTitle">Preview the whole video.<br />Beginning to ending.</h1>
           <p class="intro-copy">
             Choose a long video and an output length. Long2Short scans the video locally,
-            selects highlights, reframes them to vertical, and keeps the original audio.
+            builds a 1–5 minute preview across the full timeline, keeps scenes in order,
+            reframes them to vertical, and preserves the original audio.
           </p>
         </div>
         <div class="format-strip" aria-label="Output details">
@@ -123,7 +124,7 @@
               <option value="balanced">People + action (recommended)</option>
               <option value="whole">Show the entire original frame</option>
             </select>
-            <p>Works for any kind of video. Choose the entire frame if people, objects, or a process are spread far apart. Automatic selection uses visible activity; review the result before sharing.</p>
+            <p>Works for any kind of video. Choose the entire frame if people, objects, or a process are spread far apart. The preview covers the full timeline, but cannot understand the meaning of every scene; review it before sharing.</p>
           </div>
 
           <label class="preview-option" for="avoidPreview">
@@ -131,16 +132,17 @@
             <span><b>Skip fast-cut opening previews</b><small>Start with the real action when the video opens with a rapid highlight montage. Turn off for videos where the fast opening matters.</small></span>
           </label>
 
-          <div class="start-control">
-            <label for="openingStart">Start after opening (optional)</label>
+          <details class="start-control">
+            <summary>Optional: correct the starting point</summary>
+            <label for="openingStart">Start after opening</label>
             <input id="openingStart" type="text" placeholder="minutes:seconds, e.g. 1:18" autocomplete="off" spellcheck="false" aria-describedby="openingStartHelp" />
-            <p id="openingStartHelp">Leave empty to detect previews automatically. If the opening is still wrong, enter where the main video begins; this overrides automatic detection for this video.</p>
-          </div>
+            <p id="openingStartHelp">Usually leave this empty. Only enter a time if the automatic opening check misses a fast montage.</p>
+          </details>
 
           <div class="output-plan">
             <div>
               <span class="plan-icon" aria-hidden="true">↗</span>
-              <span><b>Ordered highlights</b><small>Longer moments, in source order</small></span>
+              <span><b>Whole-video preview</b><small>Opening, middle, ending—in order</small></span>
             </div>
             <div>
               <span class="plan-icon" aria-hidden="true">▯</span>
@@ -154,7 +156,7 @@
 
           <div class="action-row">
             <button class="primary-button" id="createBtn" type="button" disabled>
-              <span>Create 2-minute short</span>
+              <span>Create 2-minute preview</span>
               <span aria-hidden="true">→</span>
             </button>
             <p id="formatNote">Your browser will choose the best available video format.</p>
@@ -224,7 +226,7 @@
         <div class="result-copy">
           <span class="success-mark" aria-hidden="true">✓</span>
           <p class="step-label">FINISHED</p>
-          <h2 id="resultTitle">Your short is ready</h2>
+          <h2 id="resultTitle">Your preview is ready</h2>
           <p id="resultMeta">Preview it, then save it to your device.</p>
           <details class="source-timeline">
             <summary>See the source timeline</summary>
